@@ -1,0 +1,526 @@
+---
+title: "CommandManager API Reference — CraftCommand"
+sidebarTitle: "CommandManager"
+description: "Full API reference for CommandManager<S>, StandaloneCommandManager, BukkitCommandManager, and PaperCommandManager — the central registries for resolvers and command instances."
+---
+
+`CommandManager<S>` is the abstract base class that every CraftCommand integration is built on. It owns the resolver registry, the error handler, and the command-info exposer map. Platform-specific subclasses — `StandaloneCommandManager`, `BukkitCommandManager`, and `PaperCommandManager` — extend it to add platform registration logic (command-map registration for Bukkit, lifecycle-event deferral for Paper, label-map tracking for Standalone) while inheriting the full resolver and error-handling API.
+
+---
+
+## CommandManager\<S\> — base class
+
+`CommandManager<S>` is parameterised on `S`, the platform's command-sender type. All resolver lookups and error callbacks carry the same `S` throughout.
+
+### registerResolver
+
+Registers a typed argument resolver for an exact class match.
+
+```java
+public <T> void registerResolver(Class<T> type, ArgumentResolver<S, T> resolver)
+```
+
+<ParamField path="type" type="Class<T>" required>
+  The exact target class to register the resolver under. Later lookups check this key first before
+  walking the class hierarchy or querying providers.
+</ParamField>
+
+<ParamField path="resolver" type="ArgumentResolver<S, T>" required>
+  The resolver instance that converts raw argument strings into values of type `T`.
+</ParamField>
+
+---
+
+### registerProvider
+
+Registers a dynamic resolver provider that is consulted when no exact or hierarchy match is found.
+
+```java
+public void registerProvider(ArgumentResolverProvider<S> provider)
+```
+
+<ParamField path="provider" type="ArgumentResolverProvider<S>" required>
+  A provider that receives the target class and returns a resolver, or `null` if it cannot handle
+  that type. Providers are tried in registration order after all `registerResolver` entries.
+</ParamField>
+
+---
+
+### getResolver
+
+Returns the best resolver for the given type, following the four-step lookup order documented in [ArgumentResolver & ArgumentResolverProvider](/reference/argument-resolver).
+
+```java
+public <T> ArgumentResolver<S, T> getResolver(Class<T> type)
+```
+
+<ParamField path="type" type="Class<T>" required>
+  The class to look up.
+</ParamField>
+
+**Returns** an `ArgumentResolver<S, T>`. If no registered resolver or provider matches, a fallback
+resolver is returned that casts the sender to `T` if possible, or throws `IllegalArgumentException`.
+
+---
+
+### resolveParameter
+
+Resolves a single command parameter for a given type, advancing the shared index holder in place.
+Generated command wrappers delegate every parameter to this method instead of duplicating resolver
+lookup, width tracking, optional handling, and missing-argument reporting.
+
+```java
+public <T> T resolveParameter(
+    S sender,
+    Class<T> type,
+    String[] args,
+    int[] indexHolder,
+    String paramName,
+    boolean optional,
+    String defaultValue
+) throws Exception
+```
+
+<ParamField path="sender" type="S" required>
+  The platform-native command sender. Must match the manager's `S` type (e.g. `CommandSourceStack`
+  for Paper). The wrapper passes the platform sender directly — not whatever type the user-facing
+  method declares.
+</ParamField>
+
+<ParamField path="type" type="Class<T>" required>
+  The Java class to resolve the argument into.
+</ParamField>
+
+<ParamField path="args" type="String[]" required>
+  The full command arguments array available to the resolver.
+</ParamField>
+
+<ParamField path="indexHolder" type="int[]" required>
+  A single-element array holding the current argument index. The method advances `indexHolder[0]`
+  by the resolver's `getWidth()` on success, so successive calls automatically move through `args`.
+</ParamField>
+
+<ParamField path="paramName" type="String" required>
+  The parameter name used in the `"missing-argument"` error message.
+</ParamField>
+
+<ParamField path="optional" type="boolean" required>
+  When `true` and there are not enough arguments, the method returns `null` (or the resolved
+  `defaultValue`) instead of throwing.
+</ParamField>
+
+<ParamField path="defaultValue" type="String" required>
+  The string default to resolve when the parameter is optional and arguments are exhausted. Pass
+  `null` to return `null` for optional parameters with no default.
+</ParamField>
+
+**Returns** the resolved `T` value, or `null` when the parameter is optional and absent with no
+default.
+
+**Throws** `CommandException` if a required parameter has insufficient arguments; throws any
+exception the resolver itself propagates.
+
+---
+
+### filterSuggestions
+
+Static helper that filters a list of tab-completion candidates to only those starting with the
+current input, using a case-insensitive prefix comparison.
+
+```java
+public static List<String> filterSuggestions(List<String> suggestions, String current)
+```
+
+<ParamField path="suggestions" type="List<String>" required>
+  The raw candidate list. A `null` value is treated as an empty list.
+</ParamField>
+
+<ParamField path="current" type="String" required>
+  The partial input typed so far. Compared in lowercase.
+</ParamField>
+
+**Returns** a new `List<String>` containing only entries whose lowercase form starts with the
+lowercase form of `current`.
+
+---
+
+### formatMessage
+
+Formats a localisation message for a given key. The default implementation calls
+`String.format(defaultValue, args)`. Override this method to provide translations or a custom
+message dictionary.
+
+```java
+public String formatMessage(String key, String defaultValue, Object... args)
+```
+
+<ParamField path="key" type="String" required>
+  The message key (e.g. `"missing-argument"`, `"validation.min"`). See [Error Handling — Message keys](/reference/error-handling#message-keys) for the full list.
+</ParamField>
+
+<ParamField path="defaultValue" type="String" required>
+  The fallback `String.format`-compatible template used when no custom translation is provided.
+</ParamField>
+
+<ParamField path="args" type="Object..." required>
+  Format arguments applied to the template.
+</ParamField>
+
+**Returns** the formatted string. If `String.format` throws, the raw `defaultValue` is returned.
+
+---
+
+### getErrorHandler / setErrorHandler
+
+Reads or replaces the active error handler.
+
+```java
+public ErrorHandler<S> getErrorHandler()
+public void setErrorHandler(ErrorHandler<S> errorHandler)
+```
+
+<ParamField path="errorHandler" type="ErrorHandler<S>" required>
+  The new error handler. Called by generated wrappers whenever a command or resolver throws.
+</ParamField>
+
+See [Error Handling](/reference/error-handling) for details.
+
+---
+
+### registerExposer
+
+Registers a `CommandInfoExposer` produced by the generated wrapper for a given command instance.
+Called automatically by `register(Object)` in each platform subclass.
+
+```java
+public void registerExposer(Object commandInstance, CommandInfoExposer exposer)
+```
+
+<ParamField path="commandInstance" type="Object" required>
+  The user-defined annotated command object (used as the map key).
+</ParamField>
+
+<ParamField path="exposer" type="CommandInfoExposer" required>
+  The generated wrapper, which implements `CommandInfoExposer` and returns the command's info list.
+</ParamField>
+
+---
+
+### getCommandInfo
+
+Returns the list of `CommandInfo` records registered for a command instance, or an empty list if
+the instance was never registered or its wrapper does not implement `CommandInfoExposer`.
+
+```java
+public List<CommandInfo> getCommandInfo(Object commandInstance)
+```
+
+<ParamField path="commandInstance" type="Object" required>
+  The annotated command object passed to `register()`.
+</ParamField>
+
+**Returns** a `List<CommandInfo>` (never `null`).
+
+---
+
+## StandaloneCommandManager
+
+`StandaloneCommandManager` extends `CommandManager<Object>` for use in plain Java applications with no server runtime. The sender type is `Object`.
+
+### Constructors
+
+```java
+// Default: rethrows all exceptions as RuntimeException
+public StandaloneCommandManager()
+
+// Custom error handler
+public StandaloneCommandManager(ErrorHandler<Object> errorHandler)
+```
+
+The no-argument constructor installs a default error handler that re-throws the exception unchanged
+if it is already a `RuntimeException`, or wraps it in a new `RuntimeException` otherwise.
+
+---
+
+### register(Object)
+
+Scans for the annotation-processor-generated class named `ClassName_Standalone` and instantiates
+it via reflection. The wrapper is registered via `registerCommand`, and if it implements
+`CommandInfoExposer` the exposer is stored as well.
+
+```java
+public void register(Object commandInstance)
+```
+
+<ParamField path="commandInstance" type="Object" required>
+  An instance of a class annotated with `@Command`. The processor must have generated the
+  corresponding `_Standalone` wrapper at compile time.
+</ParamField>
+
+**Throws** `IllegalArgumentException` if the wrapper class cannot be found or instantiated.
+
+---
+
+### registerCommand
+
+Directly registers a `StandaloneCommand` wrapper (and all its aliases) into the internal label map.
+
+```java
+public void registerCommand(StandaloneCommand command)
+```
+
+<ParamField path="command" type="StandaloneCommand" required>
+  The command wrapper. `command.getName()` and every entry in `command.getAliases()` are all
+  stored as lowercase keys.
+</ParamField>
+
+---
+
+### getCommand
+
+Looks up a registered command by its label or any alias. The lookup is case-insensitive.
+
+```java
+public StandaloneCommand getCommand(String label)
+```
+
+<ParamField path="label" type="String" required>
+  The primary name or alias to look up.
+</ParamField>
+
+**Returns** the `StandaloneCommand`, or `null` if no command is registered under that label.
+
+---
+
+### getCommands
+
+Returns the full label-to-command map. Aliases are also present as independent entries.
+
+```java
+public Map<String, StandaloneCommand> getCommands()
+```
+
+**Returns** a `Map<String, StandaloneCommand>` (keys are lowercase).
+
+---
+
+## BukkitCommandManager
+
+`BukkitCommandManager` extends `CommandManager<CommandSender>` for Bukkit/Spigot/Paper plugins.
+
+### Constructors
+
+```java
+// Default: sends ChatColor.RED + exception.getMessage() to the sender
+public BukkitCommandManager(JavaPlugin plugin)
+
+// Custom error handler
+public BukkitCommandManager(JavaPlugin plugin, ErrorHandler<CommandSender> errorHandler)
+```
+
+<ParamField path="plugin" type="JavaPlugin" required>
+  Your plugin instance. Used as the namespace when registering to the Bukkit `CommandMap` and for
+  duplicate-command logging.
+</ParamField>
+
+<ParamField path="errorHandler" type="ErrorHandler<CommandSender>">
+  Custom error handler. When omitted, a red-message default is used.
+</ParamField>
+
+---
+
+### register(Object)
+
+Looks up the generated `ClassName_Executor` wrapper via reflection and registers it as a Bukkit
+`Command`.
+
+```java
+public void register(Object commandInstance)
+```
+
+<ParamField path="commandInstance" type="Object" required>
+  An instance annotated with `@Command`. If the object itself is already a `Command`, it is
+  forwarded directly to `register(Command)`.
+</ParamField>
+
+**Throws** `IllegalArgumentException` if the wrapper class cannot be found or instantiated, or if
+the label is already registered (a warning is logged instead of an exception in that case).
+
+---
+
+### register(Command)
+
+Registers a Bukkit `Command` directly to the server's `CommandMap` under the plugin's namespace.
+
+```java
+public void register(Command command)
+```
+
+<ParamField path="command" type="Command" required>
+  The Bukkit command to register. Duplicate labels are ignored with a warning.
+</ParamField>
+
+---
+
+### syncCommand
+
+Calls the server's `syncCommands()` method to push the updated command tree to connected clients
+(requires a CraftBukkit-derived server that exposes this method; silently does nothing otherwise).
+
+```java
+public void syncCommand()
+```
+
+---
+
+### unregisterAll
+
+Removes every command registered by this manager from the server's `CommandMap` and clears the
+internal tracking map.
+
+```java
+public void unregisterAll()
+```
+
+<Note>
+  Call `syncCommand()` after `unregisterAll()` if you want clients to see the removal immediately.
+</Note>
+
+---
+
+## PaperCommandManager
+
+`PaperCommandManager` extends `CommandManager<CommandSourceStack>` for Paper plugins using the
+Brigadier command API.
+
+### Constructors
+
+```java
+// Default: sends Component.text(message, NamedTextColor.RED) via Adventure
+public PaperCommandManager(JavaPlugin plugin)
+
+// Custom error handler
+public PaperCommandManager(JavaPlugin plugin, ErrorHandler<CommandSourceStack> errorHandler)
+```
+
+<ParamField path="plugin" type="JavaPlugin" required>
+  Your plugin instance. The constructor immediately attaches a `LifecycleEvents.COMMANDS` handler
+  so that all queued commands are registered when the lifecycle event fires.
+</ParamField>
+
+<ParamField path="errorHandler" type="ErrorHandler<CommandSourceStack>">
+  Custom error handler. When omitted, a red Adventure `Component` default is used.
+</ParamField>
+
+<Warning>
+  The `LifecycleEvents.COMMANDS` handler is registered in the constructor. You must call
+  `register()` before the lifecycle event fires (i.e., before the server finishes loading your
+  plugin). Commands registered after the event has already fired will not appear.
+</Warning>
+
+---
+
+### register(Object)
+
+Attempts to locate and instantiate the `ClassName_Paper` Brigadier wrapper first. If that class is
+not found (e.g. the command uses only features supported by the basic API), it falls back to the
+`ClassName_PaperBasic` wrapper. The resulting wrapper is queued and registered when
+`LifecycleEvents.COMMANDS` fires.
+
+```java
+public void register(Object commandInstance)
+```
+
+<ParamField path="commandInstance" type="Object" required>
+  An instance annotated with `@Command`. If the object is already a `PaperCommand` or
+  `PaperBasicCommand`, it is forwarded to the appropriate typed overload directly.
+</ParamField>
+
+**Throws** `IllegalArgumentException` if neither wrapper class can be found or instantiated.
+
+---
+
+### register(PaperCommand)
+
+Queues a full Brigadier `PaperCommand` wrapper for registration at the `LifecycleEvents.COMMANDS`
+event.
+
+```java
+public void register(PaperCommand command)
+```
+
+---
+
+### register(PaperBasicCommand)
+
+Queues a `PaperBasicCommand` (Paper's simplified command API) wrapper for registration at the
+`LifecycleEvents.COMMANDS` event.
+
+```java
+public void register(PaperBasicCommand command)
+```
+
+---
+
+## CommandInfo
+
+`CommandInfo` is a lightweight data class produced by generated wrappers and exposed through
+`CommandManager.getCommandInfo()`. It describes a single executable entry point (the root command
+or any subcommand).
+
+```java
+public class CommandInfo {
+    public CommandInfo(List<String> path, String usage, String description) { ... }
+    public List<String> getPath() { ... }
+    public String getUsage() { ... }
+    public String getDescription() { ... }
+}
+```
+
+### getPath()
+
+```java
+public List<String> getPath()
+```
+
+**Returns** an ordered `List<String>` representing the subcommand path from the root label to this
+entry. For example, a `teleport player` subcommand under the `tp` command returns
+`["tp", "teleport", "player"]`.
+
+---
+
+### getUsage()
+
+```java
+public String getUsage()
+```
+
+**Returns** the usage syntax string, such as `"player <target>"` or `"<item> [amount]"`. Sourced
+from the `@Command` / `@Subcommand` annotation's `usage` attribute.
+
+---
+
+### getDescription()
+
+```java
+public String getDescription()
+```
+
+**Returns** the human-readable description sourced from the annotation's `description` attribute.
+Returns an empty string if the annotation did not provide one.
+
+---
+
+### Example: printing all subcommands
+
+```java
+StandaloneCommandManager manager = new StandaloneCommandManager();
+manager.register(new MyCommand());
+
+List<CommandInfo> info = manager.getCommandInfo(new MyCommand());
+for (CommandInfo entry : info) {
+    System.out.printf("/%s — %s%n",
+        String.join(" ", entry.getPath()),
+        entry.getDescription());
+}
+```

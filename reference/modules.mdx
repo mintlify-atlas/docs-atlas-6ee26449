@@ -1,0 +1,121 @@
+---
+title: "CraftCommand Module Structure and Maven Artifacts"
+sidebarTitle: "Modules"
+description: "Overview of every CraftCommand Maven artifact — groupId, artifactId, purpose, and dependency scope — organized by platform and function."
+---
+
+CraftCommand is a multi-module Maven project where each module carries a single, well-defined responsibility. This design lets you pull in only the artifacts your project actually needs — nothing more. A standalone CLI application, a Bukkit plugin, and a Paper plugin all share the same core annotations and runtime base, but each uses its own platform runtime and processor without carrying unrelated dependencies.
+
+<Warning>
+  Processor artifacts — any artifact whose ID ends in `-processor` — must **never** appear in your `<dependencies>` block. They belong exclusively inside `<annotationProcessorPaths>` in the `maven-compiler-plugin` configuration. Placing a processor on the regular compile classpath causes classpath pollution: the processor's own heavy dependencies (JavaPoet, Auto-Service, etc.) leak into your runtime JAR and shadow classes your application code should never see.
+</Warning>
+
+---
+
+## Core Modules
+
+These three artifacts are the foundation of every CraftCommand integration, regardless of platform.
+
+| Artifact ID | Description | Scope |
+|---|---|---|
+| `craftcommand-annotations` | Core annotations (`@Command`, `@Subcommand`, `@Default`, `@Resolve`, etc.). No transitive dependencies. | `compile` |
+| `craftcommand-runtime` | `CommandManager` interface, `CommandFactory`, `ArgumentResolver`, `ErrorHandler`, and `CommandInfo` base classes. | `compile` |
+| `craftcommand-processor` | `BaseCommandProcessor` plus the SPI interfaces (`TypeResolver`, `ParameterAnnotationHandler`, `MethodAnnotationHandler`). The shared base used internally by every platform processor. | **Processor path only** — never in `<dependencies>` |
+
+<Note>
+  `craftcommand-processor` is an internal base library consumed by the platform-specific processors. You will not normally declare it directly; the platform processor you choose already bundles it.
+</Note>
+
+---
+
+## Standalone Modules
+
+Use these for JVM command-line applications that have no Minecraft dependency.
+
+| Artifact ID | Description | Scope |
+|---|---|---|
+| `craftcommand-standalone-runtime` | `StandaloneCommandManager` and the `StandaloneCommand` interface. Depends on `craftcommand-runtime`. | `compile` |
+| `craftcommand-standalone-processor` | Annotation processor that generates `*_Standalone` wrapper classes from your `@Command`-annotated types. | **Processor path only** — never in `<dependencies>` |
+
+---
+
+## Bukkit / Spigot Modules
+
+Use these for plugins targeting Bukkit, CraftBukkit, or Spigot.
+
+| Artifact ID | Description | Scope |
+|---|---|---|
+| `craftcommand-bukkit-runtime` | `BukkitCommandManager` with built-in Bukkit type resolvers (e.g. `Player`, `OfflinePlayer`). Depends on `craftcommand-runtime` and `spigot-api` (provided). | `compile` |
+| `craftcommand-bukkit-annotations` | Platform-specific annotations such as `@Permission`. Optional — add only when you use Bukkit-specific annotation features. | `compile` (optional) |
+| `craftcommand-bukkit-processor` | Annotation processor that generates `*_Executor` wrapper classes for Bukkit plugin commands. | **Processor path only** — never in `<dependencies>` |
+
+---
+
+## Paper (Brigadier) Modules
+
+Use these for plugins targeting Paper's modern Brigadier-based command API. Paper offers two integration modes — full Brigadier (`_Paper`) and a simplified fallback (`_PaperBasic`) — each with its own processor.
+
+| Artifact ID | Description | Scope |
+|---|---|---|
+| `craftcommand-paper-runtime` | `PaperCommandManager`, `PaperCommand`, and `PaperBasicCommand` interfaces. Depends on `craftcommand-runtime` and `paper-api` (provided). | `compile` |
+| `craftcommand-paper-processor` | Annotation processor that generates `*_Paper` wrappers integrating with Paper's Brigadier command dispatcher. | **Processor path only** — never in `<dependencies>` |
+| `craftcommand-paper-processor-basic` | Annotation processor that generates `*_PaperBasic` fallback wrappers using Paper's `BasicCommand` interface instead of full Brigadier. | **Processor path only** — never in `<dependencies>` |
+
+<Note>
+  Pick **one** Paper processor based on the command API you want: use `craftcommand-paper-processor` for native Brigadier integration, or `craftcommand-paper-processor-basic` for the simpler `BasicCommand` approach. Both processors depend on `craftcommand-paper-runtime`.
+</Note>
+
+---
+
+## Validation Module
+
+The validation module is a cross-platform extension that plugs into whichever platform processor you are already using. It supplies `ParameterAnnotationHandler` implementations loaded into the platform processor via SPI.
+
+| Artifact ID | Description | Scope |
+|---|---|---|
+| `craftcommand-validation-annotations` | Validation annotations: `@Min`, `@Max`, `@ValidateWith`. Depends on `craftcommand-annotations`. | `compile` |
+| `craftcommand-validation-processor` | SPI implementations that wire the validation annotations into the code-generation pipeline. Loaded automatically by the platform processor. | **Processor path only** — never in `<dependencies>` |
+
+---
+
+## BOM
+
+| Artifact ID | Description | Usage |
+|---|---|---|
+| `craftcommand-bom` | Bill of Materials POM that manages the versions of all CraftCommand modules above. | Import in `<dependencyManagement>` with `type=pom, scope=import` |
+
+See the [BOM reference](/reference/bom) for the full import snippet and guidance on version management.
+
+---
+
+## Dependency Diagram
+
+The diagram below shows how modules compose. Platform runtimes layer on top of the core runtime, and platform processors layer on top of the base processor — which itself depends on JavaPoet and Auto-Service for code generation.
+
+```
+craftcommand-standalone-runtime ──┐
+craftcommand-bukkit-runtime      ──┼──▶  craftcommand-runtime  ──▶  craftcommand-annotations
+craftcommand-paper-runtime       ──┘
+
+craftcommand-standalone-processor ──┐
+craftcommand-bukkit-processor      ──┼──▶  craftcommand-processor  ──▶  com.palantir.javapoet
+craftcommand-paper-processor       ──┤                              ──▶  com.google.auto.service
+craftcommand-paper-processor-basic ──┘
+
+craftcommand-validation-processor  ──▶  craftcommand-processor  (loaded via SPI into platform processor)
+```
+
+All platform runtimes and processors also transitively include `craftcommand-annotations` through the core runtime.
+
+---
+
+## GroupId and Current Version
+
+All CraftCommand artifacts share the same Maven coordinates:
+
+| Property | Value |
+|---|---|
+| **groupId** | `io.github.projectunified` |
+| **Current version** | `0.5.1` |
+
+You can browse all published artifacts on [Maven Central](https://central.sonatype.com/search?q=craftcommand&namespace=io.github.projectunified).

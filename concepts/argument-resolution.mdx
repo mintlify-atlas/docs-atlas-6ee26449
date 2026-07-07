@@ -1,0 +1,248 @@
+---
+title: "Argument Resolution: Converting Strings to Java Types"
+sidebarTitle: "Argument Resolution"
+description: "CraftCommand resolves each command argument string into a Java type via ArgumentResolver. Learn built-in type support, custom resolvers, local resolvers, and multi-argument resolvers."
+---
+
+Every command parameter except the sender is resolved from the user's raw string input through an `ArgumentResolver<S, T>` instance. Resolution happens inside the generated wrapper class: for each argument position the wrapper calls either a built-in parse expression (for the 17 JDK types registered in `TypeSupport`) or delegates to `manager.resolveParameter(...)` for custom types. This design keeps your command method signatures clean — you declare `Point pt` and receive a fully-constructed `Point`, never a raw `String`.
+
+## Built-in type support
+
+`TypeSupport` maintains a registry of JDK types that are resolved inline without any registered `ArgumentResolver`. These 17 types (primitives and their wrappers) are handled by the processor at code-generation time, emitting direct parse calls such as `Integer.parseInt(arg)` rather than going through the manager:
+
+| Type | Primitive | Wrapper |
+|---|---|---|
+| String | — | `java.lang.String` |
+| Integer | `int` | `java.lang.Integer` |
+| Long | `long` | `java.lang.Long` |
+| Double | `double` | `java.lang.Double` |
+| Float | `float` | `java.lang.Float` |
+| Short | `short` | `java.lang.Short` |
+| Byte | `byte` | `java.lang.Byte` |
+| Character | `char` | `java.lang.Character` |
+| Boolean | `boolean` | `java.lang.Boolean` |
+
+Platform processors extend `TypeSupport` to add platform-specific types. For example, a Bukkit processor registers `org.bukkit.entity.Player`, `org.bukkit.World`, and `org.bukkit.Location` so they can be declared as parameters in the same way.
+
+```java
+// int and double are resolved entirely inline — no resolver registration needed
+@Subcommand(value = "add")
+public void add(Object sender, int num1, int num2) {
+    System.out.println("Result: " + (num1 + num2));
+}
+
+@Subcommand(value = "div")
+public void divide(Object sender, double num1, double num2) {
+    System.out.println("Result: " + (num1 / num2));
+}
+```
+
+## Global resolvers
+
+For any type not in `TypeSupport`, you register an `ArgumentResolver` with the manager before registering commands. Global resolvers are available to every command managed by that `CommandManager` instance.
+
+```java
+StandaloneCommandManager manager = new StandaloneCommandManager();
+
+// Register a Point resolver that consumes 2 consecutive arguments (width = 2)
+manager.registerResolver(Point.class, new ArgumentResolver<Object, Point>() {
+    @Override
+    public Point resolve(Object sender, String[] args, String current) {
+        if (args.length < 2) {
+            throw new IllegalArgumentException("Point requires 2 arguments: <x> <y>");
+        }
+        double x = Double.parseDouble(args[0]);
+        double y = Double.parseDouble(args[1]);
+        return new Point(x, y);
+    }
+
+    @Override
+    public int getWidth() {
+        return 2;
+    }
+});
+
+manager.register(new TestCommand());
+```
+
+After this registration, any command method with a `Point` parameter automatically receives a constructed `Point` object with both coordinates parsed from the input.
+
+## ArgumentResolver interface
+
+`ArgumentResolver<S, T>` is the core abstraction. It has three methods:
+
+```java
+public interface ArgumentResolver<S, T> {
+
+    /**
+     * Converts the raw string argument(s) into the target type T.
+     * args contains the full argument array available to the resolver;
+     * current is the specific argument string being resolved.
+     */
+    T resolve(S sender, String[] args, String current) throws Exception;
+
+    /**
+     * Returns tab-completion suggestions for this parameter.
+     * Defaults to an empty list if not overridden.
+     */
+    default List<String> suggest(S sender, String[] args, String current) {
+        return java.util.Collections.emptyList();
+    }
+
+    /**
+     * The number of consecutive arguments this resolver consumes.
+     * Defaults to 1. Override to consume multiple tokens (e.g. x y for a Point).
+     */
+    default int getWidth() {
+        return 1;
+    }
+}
+```
+
+`getWidth()` is the key to multi-argument resolution. When the generated wrapper calls `manager.resolveParameter(...)`, the manager reads `resolver.getWidth()`, extracts `args[index..index+width]` as a sub-array, passes it to `resolve()`, and advances the shared `indexHolder` by `width`. This ensures the next parameter starts reading from the correct position.
+
+## Dynamic provider matching
+
+`ArgumentResolverProvider<S>` lets you handle entire type families — for example, all `enum` types — without registering a resolver for each one individually.
+
+```java
+// Register a provider that handles any enum type
+manager.registerProvider(type -> {
+    if (type.isEnum()) {
+        //noinspection unchecked
+        return (sender, args, current) ->
+                Enum.valueOf((Class<Enum>) type, current.toUpperCase());
+    }
+    return null; // null = "I don't handle this type"
+});
+```
+
+With this provider registered, any command parameter whose type is an `enum` is resolved automatically. The `getResolver(Class<T>)` method in `CommandManager` checks providers after exhausting exact-type and hierarchy matches.
+
+## Local resolvers via @Resolve
+
+A method inside the command class annotated with `@Resolve` becomes a *local resolver* — a per-instance resolver that takes priority over global ones. The processor finds these methods at compile time and emits direct method calls in the generated wrapper rather than delegating to the manager.
+
+**Implicit binding** — a `@Resolve` method is matched by return type. If the method's return type equals a parameter type, the processor wires them together automatically:
+
+```java
+// Implicit: return type CustomImpl matches the parameter type in runCustom()
+@Resolve
+public CustomImpl resolveCustom(String current) {
+    return new CustomImpl("local_" + current);
+}
+
+@Subcommand("custom")
+public void runCustom(Object sender, CustomImpl custom) {
+    // custom was resolved by resolveCustom(), not a global resolver
+}
+```
+
+**Explicit binding** — placing `@Resolve("methodName")` on a parameter overrides the implicit match and selects the named method regardless of return type compatibility:
+
+```java
+public CustomImpl resolveCustomParameter(String current) {
+    return new CustomImpl("resolved_" + current);
+}
+
+@Subcommand("param-resolve")
+public void runParamResolve(Object sender, @Resolve("resolveCustomParameter") CustomImpl custom) {
+    // custom was resolved by resolveCustomParameter(), bound by name
+}
+```
+
+Local resolvers also work for the sender parameter (parameter 0):
+
+```java
+public CustomSender resolveSender(Object sender) {
+    return new CustomSender(sender.toString() + "_resolved");
+}
+
+@Subcommand("sender-resolve")
+public void runSenderResolve(@Resolve("resolveSender") CustomSender sender) {
+    // sender was resolved by resolveSender()
+}
+```
+
+Local resolvers are **inherited** by nested subcommand classes. A `@Resolve` method defined in the root command class is visible from any nested `@Subcommand` class in the same hierarchy:
+
+```java
+@Resolve
+public CustomImpl resolveCustom(String current) {
+    return new CustomImpl("local_" + current);
+}
+
+@Subcommand("nested-inherit")
+public class NestedInherit {
+    @Default
+    public void execute(Object sender, CustomImpl custom) {
+        // resolveCustom() from the parent class is used here
+    }
+}
+```
+
+A nested class can define its own `@Resolve` method for the same type to override the parent's resolver:
+
+```java
+@Subcommand("nested-override")
+public class NestedOverride {
+
+    @Resolve
+    public CustomImpl resolveCustomOverride(String current) {
+        return new CustomImpl("override_" + current);
+    }
+
+    @Default
+    public void execute(Object sender, CustomImpl custom) {
+        // resolveCustomOverride() shadows the parent's resolveCustom()
+    }
+}
+```
+
+## Resolver lookup priority
+
+When the generated wrapper needs to resolve a parameter, the processor uses `ResolverLookup` at compile time (for local resolvers) and `CommandManager.getResolver()` at runtime (for global resolvers). The effective priority order is:
+
+1. **Local `@Resolve` method with explicit name** — parameter carries `@Resolve("methodName")`; the named method is used directly.
+2. **Implicit local `@Resolve` method by type** — a `@Resolve`-annotated method in the command class (or its enclosing parent class) whose return type matches the parameter type.
+3. **Exact-type global resolver** — registered via `manager.registerResolver(ExactType.class, resolver)`.
+4. **Class hierarchy / interface match in global resolvers** — if no exact match is found, `getResolver()` scans all registered entries for one whose key `isAssignableFrom(requestedType)`.
+5. **Dynamic provider match** — `ArgumentResolverProvider.getResolver(type)` is called for each registered provider in registration order; the first non-null result wins.
+6. **Sender fallback** — if the requested type is assignable from the actual sender object, the sender is returned directly. This is used for parameters that should receive the sender itself rather than a separate resolved value.
+
+## Multi-argument resolvers
+
+When `getWidth()` returns a value greater than 1, the resolver consumes that many consecutive arguments from the input array. The `CommandManager.resolveParameter()` method slices `args[index..index+width]` and passes the sub-array to `resolve()`, then advances `indexHolder[0]` by `width`. Subsequent parameters continue reading from the updated index, so argument positions remain correct throughout the method:
+
+```java
+// Point resolver consumes args[0] and args[1] as x and y
+manager.registerResolver(Point.class, new ArgumentResolver<Object, Point>() {
+    @Override
+    public Point resolve(Object sender, String[] args, String current) {
+        // args contains exactly [x, y] — the 2 consumed tokens
+        double x = Double.parseDouble(args[0]);
+        double y = Double.parseDouble(args[1]);
+        return new Point(x, y);
+    }
+
+    @Override
+    public int getWidth() {
+        return 2;
+    }
+});
+```
+
+A command method that uses this resolver followed by a `String` parameter works as expected:
+
+```java
+@Subcommand("point-check")
+public void runPointCheck(Object sender, Point pt, String msg) {
+    // Input: "point-check 10.5 20.5 hello"
+    // pt  = Point(10.5, 20.5)   ← consumed args[0] and args[1]
+    // msg = "hello"             ← consumed args[2], index advanced past the Point
+}
+```
+
+<Tip>
+  For a hands-on walkthrough of building, testing, and composing custom resolvers — including `suggest()` implementations and combining a provider with a hierarchy resolver — see [Custom Resolvers](/extensions/custom-resolvers).
+</Tip>

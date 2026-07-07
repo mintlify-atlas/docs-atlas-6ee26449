@@ -1,72 +1,90 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "CraftCommand",
+  "theme": "luma",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
-  },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "primary": "#2D7DD2",
+    "light": "#EAF3FC",
+    "dark": "#1A4F8A"
   },
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/ProjectUnified/CraftCommand"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/ProjectUnified/CraftCommand"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/annotation-processing",
+              "concepts/command-model",
+              "concepts/argument-resolution"
+            ]
+          },
+          {
+            "group": "Platform Guides",
+            "pages": [
+              "platforms/standalone",
+              "platforms/bukkit",
+              "platforms/paper"
+            ]
+          },
+          {
+            "group": "Validation & Extensions",
+            "pages": [
+              "extensions/validation",
+              "extensions/custom-resolvers",
+              "extensions/spi"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Annotation Reference",
+            "pages": [
+              "reference/annotations-core",
+              "reference/annotations-bukkit",
+              "reference/annotations-validation"
+            ]
+          },
+          {
+            "group": "API Reference",
+            "pages": [
+              "reference/command-manager",
+              "reference/argument-resolver",
+              "reference/error-handling"
+            ]
+          },
+          {
+            "group": "Module Reference",
+            "pages": [
+              "reference/modules",
+              "reference/bom"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

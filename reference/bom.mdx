@@ -1,0 +1,157 @@
+---
+title: "CraftCommand Bill of Materials (BOM) for Maven Version Management"
+sidebarTitle: "BOM"
+description: "Use craftcommand-bom to manage versions of all CraftCommand modules from one import, avoiding version drift across annotations, runtime, and processor artifacts."
+---
+
+`craftcommand-bom` is a Maven Bill of Materials POM that centralizes version management for every CraftCommand module. Import it once in `<dependencyManagement>` and you can omit `<version>` tags from all CraftCommand dependency declarations in the same project. When you upgrade CraftCommand, you update a single version string in `<dependencyManagement>` and every module follows automatically — no risk of accidentally mixing a `0.5.0` runtime with a `0.5.1` annotations jar.
+
+<Tip>
+  Using the BOM is the recommended approach for all CraftCommand projects. Pinning individual module versions by hand is error-prone and can cause subtle version mismatches between the annotations, runtime, and processor artifacts — for example a processor generating code that is incompatible with an older runtime on the classpath.
+</Tip>
+
+---
+
+## Importing the BOM
+
+Add the following block to your `pom.xml`. If you already have a `<dependencyManagement>` section, add only the inner `<dependency>` entry.
+
+```xml
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>io.github.projectunified</groupId>
+      <artifactId>craftcommand-bom</artifactId>
+      <version>0.5.1</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+```
+
+The `<type>pom</type>` and `<scope>import</scope>` fields are both required — omitting either will prevent Maven from treating this as a BOM import.
+
+---
+
+## Using Modules Without Version
+
+Once the BOM is imported, declare CraftCommand runtime and annotation dependencies without a `<version>` tag. Maven resolves the version from the BOM automatically.
+
+```xml
+<dependencies>
+  <!-- Core annotations: @Command, @Subcommand, @Default, @Resolve, etc. -->
+  <dependency>
+    <groupId>io.github.projectunified</groupId>
+    <artifactId>craftcommand-annotations</artifactId>
+    <!-- no <version> needed -->
+  </dependency>
+
+  <!-- Standalone runtime (replace with your target platform's runtime) -->
+  <dependency>
+    <groupId>io.github.projectunified</groupId>
+    <artifactId>craftcommand-standalone-runtime</artifactId>
+    <!-- no <version> needed -->
+  </dependency>
+
+  <!-- Optional: validation annotations (@Min, @Max, @ValidateWith) -->
+  <dependency>
+    <groupId>io.github.projectunified</groupId>
+    <artifactId>craftcommand-validation-annotations</artifactId>
+    <!-- no <version> needed -->
+  </dependency>
+</dependencies>
+```
+
+Replace `craftcommand-standalone-runtime` with the runtime for your target platform — for example `craftcommand-bukkit-runtime` or `craftcommand-paper-runtime`.
+
+---
+
+## Processor Path Without Version
+
+<Warning>
+  Maven's `<dependencyManagement>` — including BOM imports — does **not** apply to `<annotationProcessorPaths>` entries inside the `maven-compiler-plugin` configuration. This is a known Maven limitation. You **must** always specify an explicit `<version>` for every entry in `<annotationProcessorPaths>`.
+</Warning>
+
+Below is the correct pattern for declaring the processor path. Note the mandatory `<version>` tag:
+
+```xml
+<build>
+  <plugins>
+    <plugin>
+      <groupId>org.apache.maven.plugins</groupId>
+      <artifactId>maven-compiler-plugin</artifactId>
+      <version>3.15.0</version>
+      <configuration>
+        <annotationProcessorPaths>
+          <!-- Version is REQUIRED here — BOM does not cover annotationProcessorPaths -->
+          <path>
+            <groupId>io.github.projectunified</groupId>
+            <artifactId>craftcommand-standalone-processor</artifactId>
+            <version>0.5.1</version>
+          </path>
+        </annotationProcessorPaths>
+      </configuration>
+    </plugin>
+  </plugins>
+</build>
+```
+
+Replace `craftcommand-standalone-processor` with the processor matching your target platform (`craftcommand-bukkit-processor`, `craftcommand-paper-processor`, or `craftcommand-paper-processor-basic`). If you are using the validation module, add `craftcommand-validation-processor` as an additional `<path>` entry in the same `<annotationProcessorPaths>` block, again with an explicit version.
+
+---
+
+## Managed Modules
+
+The BOM manages the versions of the following artifacts. All are published under the `io.github.projectunified` groupId at version `0.5.1`.
+
+<CardGroup cols={2}>
+  <Card title="Core" icon="cube">
+    - `craftcommand-annotations`
+    - `craftcommand-runtime`
+    - `craftcommand-processor`
+  </Card>
+  <Card title="Standalone" icon="terminal">
+    - `craftcommand-standalone-runtime`
+    - `craftcommand-standalone-processor`
+  </Card>
+  <Card title="Bukkit / Spigot" icon="server">
+    - `craftcommand-bukkit-runtime`
+    - `craftcommand-bukkit-annotations`
+    - `craftcommand-bukkit-processor`
+  </Card>
+  <Card title="Paper (Brigadier)" icon="bolt">
+    - `craftcommand-paper-runtime`
+    - `craftcommand-paper-processor`
+    - `craftcommand-paper-processor-basic`
+  </Card>
+  <Card title="Validation" icon="shield-check">
+    - `craftcommand-validation-annotations`
+    - `craftcommand-validation-processor`
+  </Card>
+  <Card title="BOM itself" icon="list">
+    - `craftcommand-bom`
+  </Card>
+</CardGroup>
+
+---
+
+## Upgrading
+
+To upgrade CraftCommand, change only the BOM version in `<dependencyManagement>`:
+
+```xml
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>io.github.projectunified</groupId>
+      <artifactId>craftcommand-bom</artifactId>
+      <version><!-- new version here --></version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+```
+
+All `<dependencies>` entries that omit `<version>` will automatically resolve to the new version after your next Maven build. **Remember:** `<annotationProcessorPaths>` entries are not covered by this mechanism — locate every processor `<path>` block in your build files and update those versions separately to match the new BOM version.

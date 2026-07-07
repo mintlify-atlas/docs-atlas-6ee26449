@@ -1,0 +1,126 @@
+{
+  "projectType": "framework",
+  "projectName": "CraftCommand",
+  "projectDescription": "An annotation-processor-based, reflection-free command framework for Java applications, supporting Bukkit, Paper (Brigadier), and standalone platforms.",
+  "theme": "luma",
+  "primaryColor": "#2D7DD2",
+  "lightColor": "#EAF3FC",
+  "darkColor": "#1A4F8A",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/annotation-processing",
+              "concepts/command-model",
+              "concepts/argument-resolution"
+            ]
+          },
+          {
+            "group": "Platform Guides",
+            "pages": [
+              "platforms/standalone",
+              "platforms/bukkit",
+              "platforms/paper"
+            ]
+          },
+          {
+            "group": "Validation & Extensions",
+            "pages": [
+              "extensions/validation",
+              "extensions/custom-resolvers",
+              "extensions/spi"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Annotation Reference",
+            "pages": [
+              "reference/annotations-core",
+              "reference/annotations-bukkit",
+              "reference/annotations-validation"
+            ]
+          },
+          {
+            "group": "API Reference",
+            "pages": [
+              "reference/command-manager",
+              "reference/argument-resolver",
+              "reference/error-handling"
+            ]
+          },
+          {
+            "group": "Module Reference",
+            "pages": [
+              "reference/modules",
+              "reference/bom"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Compile-time annotation processing with JavaPoet — zero runtime reflection per command invocation",
+    "Multi-platform support: Standalone Java, Bukkit/Spigot, and Paper (Brigadier)",
+    "Hierarchical subcommands via @Subcommand on methods and nested static classes",
+    "Built-in tab-completion suggestion routing via @Suggest",
+    "Pluggable argument resolvers with type hierarchy, interface, and dynamic provider matching",
+    "Validation module with @Min, @Max, and @ValidateWith for parameter-level validation",
+    "Customizable error and message formatting via overridable formatMessage()",
+    "SPI extension points for ParameterAnnotationHandler, MethodAnnotationHandler, and TypeSupport",
+    "CommandInfo introspection for generating help menus at runtime",
+    "BOM (Bill of Materials) for simplified multi-module version management"
+  ],
+  "publicApiSurface": [
+    "@Command(value, aliases, description)",
+    "@Subcommand(value, aliases)",
+    "@Default",
+    "@Optional(value)",
+    "@Greedy",
+    "@Name(value)",
+    "@Resolve(value)",
+    "@Suggest(value)",
+    "@Permission(value, message) [Bukkit]",
+    "@Min(value, message)",
+    "@Max(value, message)",
+    "@ValidateWith(value, message)",
+    "CommandManager<S>.register(Object commandInstance)",
+    "CommandManager<S>.registerResolver(Class<T>, ArgumentResolver<S,T>)",
+    "CommandManager<S>.registerProvider(ArgumentResolverProvider<S>)",
+    "CommandManager<S>.formatMessage(String key, String defaultValue, Object... args)",
+    "CommandManager<S>.getCommandInfo(Object commandInstance)",
+    "CommandManager.filterSuggestions(List<String>, String)",
+    "ArgumentResolver<S,T>.resolve(S sender, String[] args, String current)",
+    "ArgumentResolver<S,T>.suggest(S sender, String[] args, String current)",
+    "ArgumentResolver<S,T>.getWidth()",
+    "ArgumentResolverProvider<S>.getResolver(Class<?>)",
+    "ErrorHandler<S>.handle(S sender, Exception exception)",
+    "StandaloneCommandManager.register(Object)",
+    "StandaloneCommandManager.getCommand(String)",
+    "StandaloneCommand.execute(Object sender, String[] args)",
+    "StandaloneCommand.tabComplete(Object sender, String[] args)",
+    "BukkitCommandManager(JavaPlugin)",
+    "BukkitCommandManager.register(Object)",
+    "BukkitCommandManager.syncCommand()",
+    "BukkitCommandManager.unregisterAll()",
+    "PaperCommandManager(JavaPlugin)",
+    "PaperCommandManager.register(Object)",
+    "CommandInfo.getPath() / getUsage() / getDescription()"
+  ]
+}

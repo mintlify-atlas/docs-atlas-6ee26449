@@ -1,0 +1,262 @@
+---
+title: "Core Annotations Reference — CraftCommand"
+sidebarTitle: "Core Annotations"
+description: "Complete reference for CraftCommand's core annotations: @Command, @Subcommand, @Default, @Optional, @Greedy, @Name, @Resolve, and @Suggest with attributes and usage examples."
+---
+
+The core annotations live in the `craftcommand-annotations` artifact under the package `io.github.projectunified.craftcommand.annotation`. All annotations carry `RetentionPolicy.CLASS`, which means they are consumed entirely by the annotation processor at compile time and are **not** present in the bytecode at runtime — no reflection is required or used.
+
+---
+
+## @Command
+
+**Target:** `TYPE` (class)
+
+Marks a class as the entry point for a top-level command. The processor generates a fully self-contained executor wrapper from this class. Every command class must be annotated with `@Command`; without it the processor ignores the class entirely.
+
+<ParamField path="value" type="String" required>
+  The primary name of the command as it appears in-game (e.g. `"teleport"`).
+</ParamField>
+
+<ParamField path="aliases" type="String[]">
+  Optional array of alternative names that invoke the same command. Defaults to `{}` (no aliases).
+</ParamField>
+
+<ParamField path="description" type="String">
+  A short human-readable description of the command. Defaults to `""`.
+</ParamField>
+
+```java
+@Command(value = "teleport", aliases = {"tp"}, description = "Teleport command")
+public class TeleportCommand {
+    // subcommands and handler methods go here
+}
+```
+
+---
+
+## @Subcommand
+
+**Target:** `METHOD`, `TYPE` (nested class)
+
+Registers a method or a nested inner class as a named subcommand of the enclosing command. The framework matches the first unmatched argument token against all `@Subcommand` names and aliases, then dispatches to the winning handler.
+
+When placed on a **method**, that method becomes a leaf subcommand handler. When placed on a **nested class**, the class defines its own sub-tree of methods and further nested classes, enabling arbitrarily deep command hierarchies.
+
+<ParamField path="value" type="String" required>
+  The primary name of this subcommand (the keyword the user types).
+</ParamField>
+
+<ParamField path="aliases" type="String[]">
+  Optional alternative names for this subcommand. Defaults to `{}`.
+</ParamField>
+
+```java
+@Command(value = "teleport", aliases = {"tp"}, description = "Teleport command")
+public class TeleportCommand {
+
+    // Method-level subcommand: /teleport player <target>
+    @Subcommand(value = "player", aliases = {"p"})
+    public void toPlayer(Object sender, String target) {
+        // teleport logic
+    }
+
+    // Class-level subcommand tree: /teleport world ...
+    @Subcommand("world")
+    public class WorldSub {
+
+        @Default
+        public void execute(Object sender, String worldName) {
+            // default world-teleport logic
+        }
+
+        @Subcommand("spawn")
+        public void toSpawn(Object sender, String worldName) {
+            // teleport to world spawn
+        }
+    }
+}
+```
+
+---
+
+## @Default
+
+**Target:** `METHOD`
+
+Designates a method as the fallback handler executed when the user's input does not match any `@Subcommand` keyword inside the same class or nested subcommand class. There should be at most one `@Default` method per class. The method may accept a sender as its first parameter followed by any number of typed parameters.
+
+This annotation has **no attributes**.
+
+```java
+@Command(value = "heal", description = "Heal a player")
+public class HealCommand {
+
+    @Default
+    public void execute(Object sender, String targetName, @Optional("20") int amount) {
+        // runs when the user types /heal <target> [amount]
+    }
+}
+```
+
+---
+
+## @Optional
+
+**Target:** `PARAMETER`
+
+Marks a command parameter as optional. If the user omits the argument, the processor substitutes the specified `value` string and runs it through the same type resolver used for normal arguments — so a `double` parameter annotated `@Optional("64")` resolves to `64.0` when omitted, not to a raw string. Optional parameters must appear after all required parameters in the method signature.
+
+<ParamField path="value" type="String">
+  The default value expressed as a plain string, parsed at dispatch time through the parameter's type resolver. Defaults to `""`.
+</ParamField>
+
+```java
+@Command("setblock")
+public class SetBlockCommand {
+
+    @Default
+    public void execute(
+            Object sender,
+            double x,
+            double z,
+            @Optional("64") double y,       // defaults to 64.0 when not provided
+            @Optional("stone") String block  // defaults to "stone" when not provided
+    ) {
+        // place block at (x, y, z)
+    }
+}
+```
+
+---
+
+## @Greedy
+
+**Target:** `PARAMETER`
+
+Instructs the framework to consume **all remaining tokens** in the argument array and join them with a single space into one string for this parameter. The annotated parameter must be the **last** parameter in the method signature. Useful for commands that accept free-form text such as broadcast messages or reason strings.
+
+This annotation has **no attributes**.
+
+```java
+@Command("broadcast")
+public class BroadcastCommand {
+
+    @Default
+    public void execute(Object sender, @Greedy String message) {
+        // message = every word the user typed after /broadcast, space-joined
+    }
+}
+```
+
+---
+
+## @Name
+
+**Target:** `PARAMETER`
+
+Overrides the display name of a parameter used in generated usage strings and error messages. Without this annotation the processor uses the Java parameter name (which may be mangled to `arg0`, `arg1`, etc. depending on compiler settings). Providing a descriptive name here improves the quality of auto-generated `/command help` output.
+
+<ParamField path="value" type="String" required>
+  The human-readable name to display in place of the Java parameter name.
+</ParamField>
+
+```java
+@Command("kick")
+public class KickCommand {
+
+    @Default
+    public void execute(
+            Object sender,
+            @Name("target-player") String target,
+            @Name("reason") @Greedy String reason
+    ) {
+        // usage will display as: /kick <target-player> <reason>
+    }
+}
+```
+
+---
+
+## @Resolve
+
+**Target:** `METHOD`, `PARAMETER`
+
+Provides a mechanism for **local resolvers** — custom conversion logic defined directly inside a command class rather than registered globally.
+
+- **On a method:** marks the method as a local resolver. The method's return type determines which parameter types it handles. An optional name may be supplied so that multiple resolvers for the same type can be distinguished from one another. The resolver method may accept the raw string token (or other parameters) needed to produce the resolved value.
+- **On a parameter:** binds the parameter to a specific named local resolver method, bypassing the default type-based lookup. The `value` must match the `value` used on the corresponding `@Resolve`-annotated method.
+
+<ParamField path="value" type="String">
+  When on a **method**: an optional name that other `@Resolve`-annotated parameters can reference. Defaults to `""` (name inferred from return type).
+
+  When on a **parameter**: the name of the local resolver method to invoke for this parameter. Must match the `value` of the desired `@Resolve` method.
+</ParamField>
+
+```java
+@Command("example")
+public class ExampleCommand {
+
+    // Unnamed local resolver — used automatically for any CustomImpl parameter
+    @Resolve
+    public CustomImpl resolveCustom(String current) {
+        return new CustomImpl("local_" + current);
+    }
+
+    // Named local resolver — only used when explicitly referenced
+    @Resolve("resolveCustomParameter")
+    public CustomImpl resolveCustomParameter(String current) {
+        return new CustomImpl("resolved_" + current);
+    }
+
+    // Uses the unnamed resolver automatically
+    @Subcommand("default-resolve")
+    public void runDefault(Object sender, CustomImpl custom) {
+        // custom.getName() == "local_<input>"
+    }
+
+    // Explicitly binds to the named resolver
+    @Subcommand("named-resolve")
+    public void runNamed(Object sender, @Resolve("resolveCustomParameter") CustomImpl custom) {
+        // custom.getName() == "resolved_<input>"
+    }
+}
+```
+
+---
+
+## @Suggest
+
+**Target:** `PARAMETER`
+
+Binds a parameter to a **tab-completion suggestion provider** defined inside the command class. The provider is called whenever the player presses Tab while typing that argument. The provider can be either a method (accepting `Object sender`, `String[] args`, `String current`) or a `List<String>` field.
+
+<ParamField path="value" type="String" required>
+  The name of the suggestion provider method or `List<String>` field declared in the same command class.
+</ParamField>
+
+```java
+@Command("test")
+public class TestCommand {
+
+    // Field-based provider
+    public final List<String> modes = Arrays.asList("easy", "normal", "hard");
+
+    // Method-based provider
+    public List<String> getItems(Object sender, String[] args, String current) {
+        return Arrays.asList("sword", "shield", "potion");
+    }
+
+    // Binds to the method provider
+    @Default
+    public void execute(Object sender, @Suggest("getItems") String item, @Optional("1") int amount) {
+        // item suggestions come from getItems()
+    }
+
+    // Binds to the field provider
+    @Subcommand("mode")
+    public void setMode(Object sender, @Suggest("modes") String mode) {
+        // mode suggestions come from the modes field
+    }
+}
+```

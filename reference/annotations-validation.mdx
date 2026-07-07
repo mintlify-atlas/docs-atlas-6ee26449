@@ -1,0 +1,208 @@
+---
+title: "Validation Annotations Reference — CraftCommand"
+sidebarTitle: "Validation Annotations"
+description: "Reference for CraftCommand's validation annotations: @Min and @Max for numeric range checks and @ValidateWith for custom method-based parameter validation."
+---
+
+Validation annotations are distributed in the `craftcommand-validation-annotations` artifact under the package `io.github.projectunified.craftcommand.validation.annotation`. They work in tandem with `craftcommand-validation-processor`, which must be placed on the **annotation processor path** — not the regular compile classpath — for validation code to be generated. Like all CraftCommand annotations, these carry `RetentionPolicy.CLASS` and are processed entirely at compile time.
+
+### Maven setup
+
+Add the annotations artifact as a regular dependency and the processor artifact to `<annotationProcessorPaths>`:
+
+```xml
+<dependencies>
+    <dependency>
+        <groupId>io.github.projectunified</groupId>
+        <artifactId>craftcommand-validation-annotations</artifactId>
+        <version>0.5.1</version>
+    </dependency>
+</dependencies>
+
+<build>
+    <plugins>
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <configuration>
+                <annotationProcessorPaths>
+                    <!-- platform processor (bukkit / paper / standalone) goes here too -->
+                    <path>
+                        <groupId>io.github.projectunified</groupId>
+                        <artifactId>craftcommand-validation-processor</artifactId>
+                        <version>0.5.1</version>
+                    </path>
+                </annotationProcessorPaths>
+            </configuration>
+        </plugin>
+    </plugins>
+</build>
+```
+
+<Warning>
+  Validation is generated entirely at compile time. If `craftcommand-validation-processor` is **not** listed in `<annotationProcessorPaths>`, the annotations are silently ignored — no validation code will be emitted, no build warning will appear, and arguments will be accepted regardless of their value.
+</Warning>
+
+---
+
+## @Min
+
+**Target:** `PARAMETER`
+
+**Retention:** `CLASS`
+
+Asserts that a resolved numeric parameter is **greater than or equal to** the specified minimum. The check runs after the argument is resolved to its target type (e.g. `int`, `long`, `double`, `float`). If the value is below the minimum, the processor-generated code throws a `ValidationException`.
+
+<ParamField path="value" type="double" required>
+  The minimum allowed value, inclusive. Applied after type resolution, so the comparison is always numeric.
+</ParamField>
+
+<ParamField path="message" type="String">
+  An error message or translation key sent when validation fails. Supports two `String.format`-style placeholders:
+  - `%1$s` — the display name of the parameter (from `@Name` if present, otherwise the Java parameter name)
+  - `%2$s` — the minimum value
+
+  Defaults to `""`, which causes the platform's built-in error message to be used.
+</ParamField>
+
+```java
+@Command("validate")
+public class ValidateCommand {
+
+    // Default error message from the platform
+    @Subcommand("set-level")
+    public void setLevel(Object sender, @Min(1) int level) {
+        // level >= 1 guaranteed at this point
+    }
+
+    // Custom inline error message with placeholders
+    @Subcommand("set-score")
+    public void setScore(Object sender, @Min(value = 0, message = "Score (%1$s) must be at least %2$s.") int score) {
+        // score >= 0 guaranteed
+    }
+
+    // Translation key instead of a raw message (resolved via formatMessage())
+    @Subcommand("validate-msg")
+    public void validateMsg(Object sender, @Min(value = 5, message = "Value is too small!") int val) {
+        // val >= 5 guaranteed
+    }
+}
+```
+
+---
+
+## @Max
+
+**Target:** `PARAMETER`
+
+**Retention:** `CLASS`
+
+Asserts that a resolved numeric parameter is **less than or equal to** the specified maximum. Mirrors `@Min` in structure and behaviour; the only difference is the direction of the comparison.
+
+<ParamField path="value" type="double" required>
+  The maximum allowed value, inclusive.
+</ParamField>
+
+<ParamField path="message" type="String">
+  An error message or translation key sent when validation fails. Supports the same placeholders as `@Min`:
+  - `%1$s` — the display name of the parameter
+  - `%2$s` — the maximum value
+
+  Defaults to `""`.
+</ParamField>
+
+```java
+@Command("validate")
+public class ValidateCommand {
+
+    // Combine @Min and @Max for a closed range [5, 10]
+    @Subcommand("range")
+    public void setRange(Object sender, @Min(5) @Max(10) int range) {
+        // 5 <= range <= 10 guaranteed
+    }
+
+    // Custom message using a translation key
+    @Subcommand("capped-score")
+    public void setCappedScore(
+            Object sender,
+            @Max(value = 10, message = "error.range.max") int score
+    ) {
+        // score <= 10 guaranteed
+    }
+}
+```
+
+---
+
+## @ValidateWith
+
+**Target:** `PARAMETER`
+
+**Retention:** `CLASS`
+
+Validates a parameter by delegating to a **custom validation method** declared inside the same command class. The generated code invokes the named method after resolving the argument. If the method throws any exception, the exception is caught, and a `ValidationException` is raised with the configured message (or the caught exception's own message when `message` is `""`).
+
+The validation method must:
+- Be a non-static instance method of the command class.
+- Accept a single parameter whose type is the same as (or a supertype of) the annotated command parameter.
+- Throw any `Exception` to signal a failure; return normally to signal success.
+
+<ParamField path="value" type="String" required>
+  The name of the validation method inside the command class.
+</ParamField>
+
+<ParamField path="message" type="String">
+  An error message or translation key sent when validation fails. Supports two placeholders:
+  - `%1$s` — the display name of the parameter
+  - `%2$s` — the message of the exception thrown by the validation method
+
+  Defaults to `""`, which causes the platform's built-in error message to be used (typically the exception message itself).
+</ParamField>
+
+```java
+@Command("test")
+public class TestCommand {
+
+    // Validation method: throws to signal failure
+    public void validateStringLength(String input) {
+        if (input.length() > 5) {
+            throw new IllegalArgumentException("Input is too long");
+        }
+    }
+
+    @Subcommand("validate")
+    public void runValidate(
+            Object sender,
+            @Min(5) @Max(10) int range,
+            @ValidateWith("validateStringLength") String text
+    ) {
+        // range is in [5, 10] and text.length() <= 5 at this point
+    }
+}
+```
+
+---
+
+## Message translation
+
+By default CraftCommand forwards the `message` string directly to the sender. To integrate with a custom localisation system — e.g. looking up keys in a `messages.yml` — override `formatMessage()` in your `CommandManager` subclass:
+
+```java
+public class MyCommandManager extends StandaloneCommandManager {
+
+    private final Map<String, String> translations;
+
+    public MyCommandManager(Map<String, String> translations) {
+        this.translations = translations;
+    }
+
+    @Override
+    public String formatMessage(String key, Object... args) {
+        // Look up the key; fall back to the key itself if not found
+        String template = translations.getOrDefault(key, key);
+        return String.format(template, args);
+    }
+}
+```
+
+When a validation annotation such as `@Max(value = 10, message = "error.range.max")` fails, CraftCommand calls `formatMessage("error.range.max", paramName, maxValue)`. Your override can then translate `"error.range.max"` into a locale-specific string such as `"The value of %1$s must not exceed %2$s."` before formatting.

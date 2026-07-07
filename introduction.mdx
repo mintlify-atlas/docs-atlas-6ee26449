@@ -1,0 +1,64 @@
+---
+title: "CraftCommand: Reflection-Free Java Command Framework"
+sidebarTitle: "Introduction"
+description: "CraftCommand uses compile-time annotation processing to generate platform-native command wrappers, eliminating runtime reflection overhead across Standalone, Bukkit, and Paper platforms."
+---
+
+CraftCommand is an annotation-driven command framework for Java applications that fundamentally differs from other command libraries in one critical way: it never uses runtime reflection to read or dispatch annotations. While most frameworks inspect your annotated classes at startup and call methods via `Method.invoke()` on every execution, CraftCommand's annotation processor reads your `@Command`-annotated classes **at compile time** and uses [JavaPoet](https://github.com/palantir/javapoet) to emit plain Java wrapper classes into your build. At runtime, those generated wrappers call your methods as ordinary Java — with full type safety and zero per-invocation reflection overhead.
+
+## How it works
+
+The CraftCommand build pipeline has three distinct phases:
+
+1. **Annotation processing (compile time)** — the platform-specific annotation processor scans every class annotated with `@Command`. For each class it finds, it reads the `@Default`, `@Subcommand`, `@Optional`, and validation annotations on its methods and parameters entirely within the Java compiler's annotation processing round.
+
+2. **Code generation (compile time)** — the processor delegates to JavaPoet to emit a concrete wrapper class named `YourCommandClass_<Platform>` (e.g. `CalculatorCommand_Standalone`). This class implements the platform's command interface directly and contains hand-unrolled argument parsing and dispatch logic — no maps of strings-to-`Method` objects, no `getDeclaredMethods()` calls.
+
+3. **Registration (runtime, once)** — when you call `manager.register(new YourCommand())`, `StandaloneCommandManager` performs a single `Class.forName("YourCommandClass_Standalone")` lookup to locate the generated wrapper, constructs it via its known constructor signature, and stores it in a `HashMap`. Every subsequent `execute()` or `tabComplete()` call goes straight through the generated code, with **no reflection at all**.
+
+The net result is command dispatch at near-native speed, deterministic behavior in environments that restrict reflection (GraalVM native image, strict class-loaders), and compile-time errors for mismatched method signatures instead of runtime surprises.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Compile-Time Code Generation" icon="gear">
+    The annotation processor emits platform-native wrapper classes via JavaPoet during compilation. No annotation scanning, no proxy objects, and no `Method.invoke()` on the hot path.
+  </Card>
+  <Card title="Multi-Platform Support" icon="layer-group">
+    A single set of annotations targets Standalone Java applications, Bukkit/Spigot plugins, and Paper (Brigadier) plugins. Swap the runtime and processor dependency to change platforms.
+  </Card>
+  <Card title="Pluggable Argument Resolvers" icon="plug">
+    Register custom type providers on the `CommandManager` to teach the framework how to parse your own types from raw string arguments — including enums, UUIDs, or domain objects.
+  </Card>
+  <Card title="Built-In Validation" icon="shield-check">
+    The optional validation module provides parameter-level annotations such as `@Min` and `@ValidateWith`. Violations are caught before your method body runs and routed through the configurable `ErrorHandler`.
+  </Card>
+</CardGroup>
+
+## Supported platforms
+
+| Platform | Description |
+|---|---|
+| **Standalone** | Any Java 8+ application — CLIs, bots, services, or desktop tools |
+| **Bukkit / Spigot** | Minecraft server plugins using the Bukkit command API |
+| **Paper** | Minecraft server plugins using Paper's Brigadier integration for richer argument types and client-side completions |
+
+## Module overview
+
+| Module | Purpose |
+|---|---|
+| `craftcommand-annotations` | Core annotations: `@Command`, `@Subcommand`, `@Default`, `@Optional`, `@Suggest`, `@Greedy`, `@Resolve` |
+| `craftcommand-runtime` | Shared runtime interfaces and base classes used by all platform runtimes |
+| `craftcommand-standalone-runtime` | Runtime for standalone Java apps — `StandaloneCommandManager`, `StandaloneCommand` |
+| `craftcommand-standalone-processor` | Annotation processor that generates `*_Standalone` wrapper classes |
+| `craftcommand-bukkit-runtime` | Runtime for Bukkit/Spigot plugins |
+| `craftcommand-bukkit-processor` | Annotation processor that generates Bukkit command wrappers |
+| `craftcommand-paper-runtime` | Runtime for Paper plugins with Brigadier support |
+| `craftcommand-paper-processor` | Annotation processor that generates Paper/Brigadier command wrappers |
+| `craftcommand-validation-annotations` | Validation annotations: `@Min`, `@Max`, `@ValidateWith`, etc. |
+| `craftcommand-validation-processor` | Annotation processor that weaves validation checks into generated wrappers |
+| `craftcommand-bom` | Bill of Materials — import once to manage all CraftCommand module versions |
+
+<Note>
+  CraftCommand targets **Java 8 and above** and is published to Maven Central under the `io.github.projectunified` group ID. The BOM (`craftcommand-bom`) is the recommended way to keep all module versions in sync — see the [Installation](/installation) guide for details.
+</Note>

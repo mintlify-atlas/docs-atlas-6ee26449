@@ -1,0 +1,224 @@
+---
+title: "Error Handling in CraftCommand — ErrorHandler and CommandException"
+sidebarTitle: "Error Handling"
+description: "Learn how CraftCommand routes command errors through ErrorHandler<S> and CommandException, and how to customize error messages using formatMessage() and message keys."
+---
+
+When a command execution or argument resolution throws an exception, CraftCommand catches it inside
+the generated wrapper and delegates immediately to the `ErrorHandler<S>` registered on the
+`CommandManager`. The exception is never propagated back to the platform caller — Bukkit, Paper, or
+your own CLI loop — unless the error handler itself re-throws it. This gives you a single,
+predictable interception point for all command-level errors.
+
+---
+
+## ErrorHandler\<S\> interface
+
+`ErrorHandler<S>` is a single-abstract-method interface. Implement it as a lambda or anonymous
+class.
+
+```java
+public interface ErrorHandler<S> {
+    void handle(S sender, Exception exception);
+}
+```
+
+<ParamField path="sender" type="S" required>
+  The command sender who triggered the execution. Use this to send a contextual error reply.
+</ParamField>
+
+<ParamField path="exception" type="Exception" required>
+  The exception that was thrown. This is most often a `CommandException` (generated wrapper checks
+  and usage errors) but can be any exception thrown by a resolver or by your own command method.
+</ParamField>
+
+The interface carries no checked exceptions, so a handler that re-throws must use an unchecked
+type or wrap the exception.
+
+---
+
+## Default error handlers by platform
+
+Each platform subclass installs a sensible default so commands work out of the box.
+
+### Standalone
+
+```java
+public StandaloneCommandManager() {
+    super((sender, exception) -> {
+        if (exception instanceof RuntimeException) {
+            throw (RuntimeException) exception;
+        }
+        throw new RuntimeException(exception);
+    });
+}
+```
+
+The exception is re-thrown unchanged if it is already a `RuntimeException`; otherwise it is
+wrapped. This means `CommandException` (which extends `RuntimeException`) surfaces directly to the
+calling code with its original message.
+
+### Bukkit
+
+```java
+public BukkitCommandManager(JavaPlugin plugin) {
+    super((sender, exception) ->
+        sender.sendMessage(ChatColor.RED + exception.getMessage()));
+    this.plugin = plugin;
+}
+```
+
+The error message is sent to the player (or console) as a red chat line. No stack trace is logged.
+
+### Paper
+
+```java
+public PaperCommandManager(JavaPlugin plugin) {
+    super((source, exception) ->
+        source.getSender().sendMessage(
+            Component.text(exception.getMessage(), NamedTextColor.RED)
+        ));
+    this.plugin = plugin;
+}
+```
+
+Uses the Adventure API to send a red `Component` to the underlying `Audience`. The `source` is a
+`CommandSourceStack`; `source.getSender()` unwraps it to the Bukkit `CommandSender`.
+
+---
+
+## Custom error handler
+
+### At construction time
+
+Pass your handler to the two-argument constructor. The handler replaces the platform default
+entirely.
+
+```java
+// Standalone — log instead of re-throwing
+StandaloneCommandManager manager = new StandaloneCommandManager(
+    (sender, ex) -> System.err.println("Command error: " + ex.getMessage())
+);
+```
+
+```java
+// Bukkit — localized error message
+BukkitCommandManager manager = new BukkitCommandManager(plugin,
+    (sender, ex) -> {
+        String localized = plugin.getConfig()
+            .getString("messages.error", ex.getMessage());
+        sender.sendMessage(ChatColor.RED + localized);
+    }
+);
+```
+
+### After construction via setErrorHandler
+
+The error handler can be swapped at any time without recreating the manager:
+
+```java
+manager.setErrorHandler((sender, ex) -> {
+    sender.sendMessage(ChatColor.GOLD + "[Warning] " + ex.getMessage());
+});
+```
+
+See [`setErrorHandler`](/reference/command-manager#geterrorhandler--seterrorhandler) in the
+`CommandManager` reference for the full method signature.
+
+---
+
+## CommandException
+
+`CommandException` is the single exception type used by generated wrappers for all structural
+errors (missing arguments, usage violations, failed sender-type checks). It extends
+`RuntimeException`, so it is unchecked and passes through the `ErrorHandler` signature without
+wrapping.
+
+```java
+public class CommandException extends RuntimeException {
+    public CommandException(String message) {
+        super(message);
+    }
+
+    public CommandException(String message, Throwable cause) {
+        super(message, cause);
+    }
+}
+```
+
+Catching `CommandException` specifically in your error handler lets you distinguish framework
+validation failures from unexpected exceptions thrown by your own business logic:
+
+```java
+manager.setErrorHandler((sender, ex) -> {
+    if (ex instanceof CommandException) {
+        sender.sendMessage(ChatColor.YELLOW + ex.getMessage()); // usage / validation
+    } else {
+        sender.sendMessage(ChatColor.RED + "An internal error occurred.");
+        plugin.getLogger().log(Level.SEVERE, "Unexpected command error", ex);
+    }
+});
+```
+
+<Note>
+  Argument resolver exceptions that are not `CommandException` are also caught and forwarded to the
+  error handler, so a resolver that throws `IllegalArgumentException` for bad input reaches the
+  same handler.
+</Note>
+
+---
+
+## Message keys
+
+`CommandManager.formatMessage(String key, String defaultValue, Object... args)` is called by
+generated wrappers every time a framework-level error message needs to be produced. The `key`
+parameter lets you intercept and translate any message by overriding `formatMessage`.
+
+The following keys are used by the generated wrappers:
+
+| Key | Default template | Format args |
+|-----|-----------------|-------------|
+| `"missing-argument"` | `"Missing arguments for parameter: %s"` | `%s` → parameter name |
+| `"usage"` | `"Usage: %s"` | `%s` → full usage string |
+| `"validation.min"` | `"%s cannot be less than %s"` | `%1$s` → param name, `%2$s` → min value |
+| `"validation.max"` | `"%s cannot be greater than %s"` | `%1$s` → param name, `%2$s` → max value |
+| `"validation.with"` | `"%s validation failed: %s"` | `%1$s` → param name, `%2$s` → exception message |
+
+<Tip>
+  Custom message strings set in `@Min`, `@Max`, and `@ValidateWith` annotations are treated as
+  **message keys** and passed to `formatMessage()` before being shown to the user. This means you
+  can set `@Min(value = 5, message = "error.range.min")` and then translate `"error.range.min"` in
+  your `formatMessage()` override — or set the annotation message to a literal string and it will
+  be used verbatim as the default template.
+</Tip>
+
+### Overriding formatMessage with a translation dictionary
+
+The pattern shown in the integration tests uses a `Map<String, String>` as a lightweight
+translation dictionary:
+
+```java
+Map<String, String> messages = new HashMap<>();
+messages.put("usage", "Invalid syntax. Correct format: %s");
+messages.put("missing-argument", "Missing value for: %s");
+messages.put("error.range.max", "Value is too big: limit is %2$s");
+
+StandaloneCommandManager manager = new StandaloneCommandManager() {
+    @Override
+    public String formatMessage(String key, String defaultValue, Object... args) {
+        String template = messages.get(key);
+        if (template != null) {
+            try {
+                return String.format(template, args);
+            } catch (Exception e) {
+                return template;
+            }
+        }
+        return super.formatMessage(key, defaultValue, args);
+    }
+};
+```
+
+Keys absent from the map fall through to `super.formatMessage()`, which applies the built-in
+default template. You can populate the map from a YAML config, a resource bundle, or any other
+localisation source.

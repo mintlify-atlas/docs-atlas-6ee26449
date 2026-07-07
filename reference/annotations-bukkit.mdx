@@ -1,0 +1,100 @@
+---
+title: "Bukkit-Specific Annotations Reference — CraftCommand"
+sidebarTitle: "Bukkit Annotations"
+description: "Reference for CraftCommand's Bukkit-platform annotations: @Permission for declaring required Bukkit permission nodes on command classes and subcommand methods."
+---
+
+Bukkit-specific annotations are distributed in a separate artifact, `craftcommand-bukkit-annotations`, under the package `io.github.projectunified.craftcommand.bukkit.annotation`. This artifact is intentionally decoupled from the core annotations so that projects targeting other platforms (Standalone, Paper) are not forced to depend on Bukkit APIs. Like all CraftCommand annotations, these carry `RetentionPolicy.CLASS` and are consumed entirely at compile time.
+
+Add the artifact to your Maven `<dependencies>` block:
+
+```xml
+<dependency>
+    <groupId>io.github.projectunified</groupId>
+    <artifactId>craftcommand-bukkit-annotations</artifactId>
+    <version>0.5.1</version>
+</dependency>
+```
+
+---
+
+## @Permission
+
+**Target:** `TYPE` (class), `METHOD`
+
+**Retention:** `CLASS`
+
+Declares the Bukkit permission node that a command sender must hold before the command or subcommand is executed. The generated wrapper calls `sender.hasPermission(value)` before performing any argument resolution. If the check fails, the sender receives the `message` (or a platform default message when `message` is `""`) and execution stops immediately.
+
+<ParamField path="value" type="String" required>
+  The fully-qualified Bukkit permission node, e.g. `"myplugin.teleport"` or `"myplugin.admin.kick"`.
+</ParamField>
+
+<ParamField path="message" type="String">
+  The error message sent to the player when they lack the required permission. If left as the default empty string `""`, the platform's default "you do not have permission" message is used instead. Defaults to `""`.
+</ParamField>
+
+### Behavior
+
+| Placement | Effect |
+|-----------|--------|
+| On the **class** (`@Target TYPE`) | The permission check applies to every subcommand and the default handler inside that class. |
+| On a **method** (`@Target METHOD`) | The permission check applies only to that specific subcommand handler, allowing finer-grained overrides. |
+
+Permission checks run **before** argument resolution. Even if the user provides syntactically invalid arguments, the permission check will fire first — the sender hears about a lack of permission rather than an argument parse error.
+
+### Examples
+
+**Class-level permission** — all subcommands require `myplugin.teleport`:
+
+```java
+import io.github.projectunified.craftcommand.annotation.Command;
+import io.github.projectunified.craftcommand.annotation.Default;
+import io.github.projectunified.craftcommand.annotation.Subcommand;
+import io.github.projectunified.craftcommand.bukkit.annotation.Permission;
+
+@Command(value = "teleport", aliases = {"tp"}, description = "Teleport command")
+@Permission(value = "myplugin.teleport", message = "You don't have permission to teleport.")
+public class TeleportCommand {
+
+    @Default
+    public void execute(Object sender, String targetName) {
+        // permission check for myplugin.teleport runs before this
+    }
+
+    @Subcommand("here")
+    public void teleportHere(Object sender, String targetName) {
+        // also guarded by myplugin.teleport from the class-level annotation
+    }
+}
+```
+
+**Method-level permission override** — different subcommands require different nodes:
+
+```java
+@Command(value = "admin", description = "Admin commands")
+@Permission("myplugin.admin")          // base permission for all subcommands
+public class AdminCommand {
+
+    @Subcommand("kick")
+    @Permission("myplugin.admin.kick") // stricter node for this subcommand only
+    public void kick(Object sender, String targetName, @Greedy String reason) {
+        // requires myplugin.admin.kick
+    }
+
+    @Subcommand("list")
+    public void list(Object sender) {
+        // only requires myplugin.admin (from the class annotation)
+    }
+
+    @Subcommand("ban")
+    @Permission(value = "myplugin.admin.ban", message = "error.no_ban_permission")
+    public void ban(Object sender, String targetName) {
+        // requires myplugin.admin.ban; custom message sent on failure
+    }
+}
+```
+
+<Note>
+  `@Permission` is only processed by `craftcommand-bukkit-processor` and `craftcommand-paper-processor`. If you compile against the Standalone processor (`craftcommand-processor`), the annotation is present in the class file but **silently ignored** — no permission check will be generated and no compilation error will occur.
+</Note>

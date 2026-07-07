@@ -1,0 +1,72 @@
+---
+title: "How CraftCommand's Compile-Time Annotation Processor Works"
+sidebarTitle: "Annotation Processing"
+description: "CraftCommand's annotation processor runs during javac to scan @Command classes and generate platform-native Java wrapper classes using JavaPoet — no runtime reflection required."
+---
+
+Most command frameworks resolve argument types, locate handler methods, and build routing tables at application startup using Java reflection. CraftCommand takes a different approach: it ships a `javax.annotation.processing.Processor` that runs inside `javac` itself. By the time your application starts, every routing decision, every type cast, and every argument parse call has already been written out as ordinary Java source code. There is no reflection-based dispatch at runtime, and no hidden startup cost.
+
+## The processing pipeline
+
+<Steps>
+  <Step title="Scan for @Command classes">
+    During every compilation round, `BaseCommandProcessor.process()` asks the `RoundEnvironment` for all elements annotated with `@Command`. Each matching `TypeElement` is handed off to the parser.
+  </Step>
+  <Step title="Build the CommandModel tree">
+    `CommandParser` traverses the class hierarchy of the annotated type and constructs a `CommandModel` — a plain data object that holds the command name, aliases, description, an optional `MethodModel` for the `@Default` handler, a list of `MethodModel` instances for `@Subcommand` methods, and a list of child `CommandModel` instances for nested `@Subcommand` classes. `MethodModel` in turn holds a `ParameterModel` for the sender and one for each subsequent method parameter.
+  </Step>
+  <Step title="Platform processor calls generateWrapper()">
+    Each platform ships its own processor that extends `BaseCommandProcessor` — for example `StandaloneCommandProcessor`. The base class calls `buildWrapperClass(commandModel, typeElement)`, which uses [JavaPoet](https://github.com/palantir/javapoet) to assemble a `TypeSpec` containing the full generated class. The platform processor fills in platform-specific details (entry method signatures, sender casting, permission checks) through a set of abstract hooks.
+  </Step>
+  <Step title="JavaFile lands in build/generated/sources/">
+    Once the `TypeSpec` is complete, `buildWrapperClass` writes it out with `JavaFile.builder(...).build().writeTo(processingEnv.getFiler())`. The Java compiler then picks up the generated file and compiles it like any other source file. The result is a `.class` file in your build output with no special status.
+  </Step>
+</Steps>
+
+## Generated class naming
+
+The `Naming` utility class provides the single source of truth for all naming conventions. Wrapper class names follow a `OriginalName + suffix` pattern where the suffix is determined by the platform processor:
+
+| Platform | Suffix | Example |
+|---|---|---|
+| Standalone | `_Standalone` | `CalculatorCommand_Standalone` |
+| Bukkit | `_Executor` | `CalculatorCommand_Executor` |
+| Paper (Brigadier) | `_Paper` | `CalculatorCommand_Paper` |
+| Paper (basic) | `_PaperBasic` | `CalculatorCommand_PaperBasic` |
+
+For example, annotating a class named `CalculatorCommand` and building for the standalone platform produces a class named `CalculatorCommand_Standalone` in the same package as the original.
+
+The `Naming` class also governs every other generated identifier: field names for nested subcommand instances (`subInstance_calculatorcommand_advancedcommands`), resolver helper methods (`resolve_Point`), suggestion helper methods (`suggest_calculatorcommand_add_0`), execution routing helpers (`execute_calculatorcommand_advancedcommands`), and suggestion routing helpers (`suggest_calculatorcommand_advancedcommands`).
+
+## What the generated class contains
+
+A generated wrapper is a `public final` class that implements the platform's command interface. Its anatomy is consistent across all platforms:
+
+**`factory()` static method** — a `public static` method that accepts the original command instance and a `CommandManager`. This is the single entry point used by `CommandFactory` at registration time.
+
+**`resolve_*` methods** — for each parameter type that requires a global resolver (one not covered by `TypeSupport`'s 17 built-ins or a local `@Resolve` method), the generator emits a private `resolve_<TypeName>` helper that delegates to `manager.resolveParameter(...)`. These are called by execution routing code and keep the routing methods clean and readable.
+
+**Subcommand routing logic** — the generated `execute` and `tabComplete` methods open with `if (args.length >= 1)` guards, extract `args[0]` as the subcommand token, and route through a chain of `if (sub.equals("name") || sub.equals("alias"))` blocks — one per subcommand method and one per nested subcommand class. Nested subcommand classes get their own private `execute_<classPath>` and `suggest_<classPath>` helper methods that mirror this routing pattern recursively.
+
+**`execute()` and `tabComplete()` implementations** — the platform entry methods wrap all routing inside a `try/catch(Exception e)` block that forwards any exception to `manager.getErrorHandler().handle(sender, e)`. This means every `CommandException` thrown by resolvers or validation reaches the handler without boilerplate in your command class.
+
+**Parameter suggestion helpers** — for each parameter position in each method, a private `suggest_<classPath>_<subcommand>_<index>` method is generated. These methods inspect the current argument position and return suggestions from the appropriate source: a `@Suggest`-bound field or method, the global `manager.getResolver(...).suggest(...)` call, or the built-in `suggestBoolean` helper for `boolean` parameters.
+
+## Registration flow
+
+At runtime, each platform manager's `register(Object commandInstance)` method performs **one** reflective lookup to connect the command instance to its generated wrapper:
+
+```java
+// One reflection call per command class — not per invocation
+Class<?> commandClass = commandInstance.getClass();
+Class<?> wrapperClass = Class.forName(commandClass.getName() + "_Standalone");
+StandaloneCommand command = (StandaloneCommand) wrapperClass
+        .getConstructor(commandClass, CommandManager.class)
+        .newInstance(commandInstance, this);
+```
+
+After that, the wrapper is stored in a `Map<String, StandaloneCommand>` (or platform equivalent) and every subsequent `execute()` or `tabComplete()` call dispatches directly through the generated class — zero additional reflection, zero proxy overhead.
+
+<Note>
+  Platform processors (`StandaloneCommandProcessor`, `BukkitCommandProcessor`, `PaperCommandProcessor`) are **internal API**. The exact shape of their generated output — method names, field layout, helper method signatures — may change between CraftCommand versions without a deprecation notice. Do not depend on the generated class structure directly; always interact with commands through the runtime `CommandManager` API.
+</Note>

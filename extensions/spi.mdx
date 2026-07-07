@@ -1,0 +1,254 @@
+---
+title: "Extending CraftCommand via Java SPI Extension Points"
+sidebarTitle: "SPI Extensions"
+description: "CraftCommand exposes Java SPI interfaces for adding custom parameter annotation handlers, method annotation handlers, and type support to the annotation processor pipeline."
+---
+
+CraftCommand's annotation processor is extensible through standard Java SPI. Third-party libraries — such as the built-in validation module — can hook into the code generation pipeline without forking the framework. Extensions declare themselves in `META-INF/services` files and are discovered automatically when placed on the annotation processor classpath alongside a platform processor.
+
+<Warning>
+  Processor extension SPI is **internal API**. Interface signatures (`ParameterAnnotationHandler`, `MethodAnnotationHandler`, `TypeSupport`) may change between minor versions. Pin your dependency to a specific CraftCommand version when writing a processor extension.
+</Warning>
+
+## Extension point overview
+
+| SPI Interface | Module | Purpose |
+|---|---|---|
+| `ParameterAnnotationHandler` | `craftcommand-processor` | Inject code for custom parameter-level annotations (e.g. validation, transformation) |
+| `MethodAnnotationHandler` | `craftcommand-processor` | Inject code for custom method-level annotations (e.g. permission checks, cooldowns) |
+| `TypeSupport` | `craftcommand-processor` | Register custom type → resolver method mappings for the code generator |
+
+## ParameterAnnotationHandler
+
+`ParameterAnnotationHandler<A>` is called by the code generator **after** a parameter value has been resolved and assigned to its local variable. The handler emits additional statements into the generated execute method — typically a guard `if` that throws a `CommandException`.
+
+```java
+public interface ParameterAnnotationHandler<A extends Annotation> {
+
+    /** The annotation type this handler targets. */
+    Class<A> annotationType();
+
+    /**
+     * Injects custom code into the generated method execution block.
+     * Called after the parameter value is resolved and assigned to varName.
+     *
+     * @param annotation   the parameter annotation instance
+     * @param parameter    the parameter model (name, type, enclosing element, …)
+     * @param varName      the generated local variable holding the resolved value
+     * @param instanceExpr expression for the command class instance
+     * @param senderVar    variable name for the command sender
+     * @param methodSpec   JavaPoet builder for the execute method — append statements here
+     */
+    void handle(A annotation, ParameterModel parameter, String varName,
+                String instanceExpr, String senderVar, MethodSpec.Builder methodSpec);
+}
+```
+
+### How the validation module uses this SPI
+
+`MinHandler` (part of `craftcommand-validation-processor`) implements `ParameterAnnotationHandler<Min>`. When the processor encounters a parameter annotated with `@Min`, it calls `MinHandler.handle()`, which emits a bounds-check directly into the generated wrapper:
+
+```java
+public class MinHandler implements ParameterAnnotationHandler<Min> {
+
+    @Override
+    public Class<Min> annotationType() {
+        return Min.class;
+    }
+
+    @Override
+    public void handle(Min annotation, ParameterModel parameter, String varName,
+                       String instanceExpr, String senderVar, MethodSpec.Builder methodSpec) {
+        String messageKey = annotation.message().isEmpty() ? "validation.min" : annotation.message();
+        String defaultTemplate = annotation.message().isEmpty()
+                ? "%s cannot be less than %s"
+                : annotation.message();
+
+        methodSpec.addComment("Validate '" + parameter.getName() + "' against min: " + annotation.value());
+        methodSpec.beginControlFlow("if ($L < $L)", varName, annotation.value())
+                .addStatement("throw new $T(manager.formatMessage($S, $S, $S, $L))",
+                        CommandException.class, messageKey, defaultTemplate,
+                        parameter.getName(), annotation.value())
+                .endControlFlow();
+    }
+}
+```
+
+The resulting generated code looks like:
+
+```java
+// Validate 'range' against min: 5.0
+if (range < 5.0) {
+    throw new CommandException(manager.formatMessage(
+        "validation.min", "%s cannot be less than %s", "range", 5.0));
+}
+```
+
+`MaxHandler` and `ValidateWithHandler` follow the same pattern for their respective annotations.
+
+## MethodAnnotationHandler
+
+`MethodAnnotationHandler<A>` is called once per `@Subcommand` or `@Default` method that carries a matching annotation. It emits code **before** parameter resolution and method invocation — the ideal place for permission checks, cooldown gates, or any pre-execution logic.
+
+```java
+public interface MethodAnnotationHandler<A extends Annotation> {
+
+    /** The annotation type this handler targets. */
+    Class<A> annotationType();
+
+    /**
+     * Injects custom code into the generated execute method.
+     * Called before parameter resolution and before the user method is invoked.
+     *
+     * @param annotation   the method annotation instance
+     * @param method       the method model (name, parameters, enclosing type, …)
+     * @param instanceExpr expression for the command class instance
+     * @param senderVar    variable name for the command sender
+     * @param methodSpec   JavaPoet builder for the execute method — append statements here
+     */
+    void handle(A annotation, MethodModel method, String instanceExpr,
+                String senderVar, MethodSpec.Builder methodSpec);
+}
+```
+
+### Usage pattern
+
+A platform processor (e.g. Bukkit) can contribute a `MethodAnnotationHandler<Permission>` that emits a permission check before the method body:
+
+```java
+public class PermissionHandler implements MethodAnnotationHandler<Permission> {
+
+    @Override
+    public Class<Permission> annotationType() {
+        return Permission.class;
+    }
+
+    @Override
+    public void handle(Permission annotation, MethodModel method, String instanceExpr,
+                       String senderVar, MethodSpec.Builder methodSpec) {
+        methodSpec.beginControlFlow("if (!$L.hasPermission($S))", senderVar, annotation.value())
+                .addStatement("throw new $T($S)", CommandException.class, "You lack permission.")
+                .endControlFlow();
+    }
+}
+```
+
+The generated wrapper then contains this guard before any argument is resolved.
+
+## TypeSupport
+
+`TypeSupport` is the single source of truth for how the processor maps Java types to generated resolver calls, default literals, Brigadier argument types, and suggestion code. Built-in JDK types (primitives, `String`) are pre-registered; platform processors add platform-specific types (e.g. `Player`, `World`).
+
+To contribute additional type mappings, build and register a `TypeSupport.Entry` via the fluent builder:
+
+```java
+TypeSupport typeSupport = TypeSupport.builtins();
+
+// Register a custom type — here an example platform type
+typeSupport.register(TypeSupport.Entry.builder(
+            ClassName.get("com.example", "MyType"), /* width */ 1)
+        .primitiveDefault("null")
+        .literal(defaultVal -> CodeBlock.of("null"))
+        .parse((spec, va) ->
+                spec.addStatement("$L = MyType.parse($L)", va[0], va[1]))
+        .build());
+```
+
+`TypeSupport` is used entirely at compile time; it has no runtime presence.
+
+## Registering an extension
+
+Extensions are discovered through the standard Java `ServiceLoader` mechanism. Create a file under `META-INF/services/` whose name is the fully-qualified SPI interface and whose content lists one implementation class per line.
+
+<Steps>
+  <Step title="Implement the SPI interface">
+    Create your handler class in the processor module:
+
+    ```java
+    package com.example.myextension;
+
+    public class MyParamHandler implements ParameterAnnotationHandler<MyAnnotation> {
+        @Override
+        public Class<MyAnnotation> annotationType() { return MyAnnotation.class; }
+
+        @Override
+        public void handle(MyAnnotation annotation, ParameterModel parameter,
+                           String varName, String instanceExpr,
+                           String senderVar, MethodSpec.Builder methodSpec) {
+            // emit validation/transformation code
+        }
+    }
+    ```
+  </Step>
+  <Step title="Create the services file">
+    Add the following file to your processor's resources:
+
+    ```
+    src/main/resources/META-INF/services/
+      io.github.projectunified.craftcommand.processor.extension.ParameterAnnotationHandler
+    ```
+
+    Its content should list your implementation(s), one per line:
+
+    ```
+    com.example.myextension.MyParamHandler
+    ```
+
+    The validation processor registers all three of its handlers this way:
+
+    ```
+    io.github.projectunified.craftcommand.validation.processor.extension.MinHandler
+    io.github.projectunified.craftcommand.validation.processor.extension.MaxHandler
+    io.github.projectunified.craftcommand.validation.processor.extension.ValidateWithHandler
+    ```
+  </Step>
+  <Step title="Add the processor to annotationProcessorPaths">
+    Place your processor JAR alongside the platform processor in the Maven Compiler Plugin configuration:
+
+    ```xml
+    <annotationProcessorPaths>
+        <path>
+            <groupId>io.github.projectunified</groupId>
+            <artifactId>craftcommand-standalone-processor</artifactId>
+            <version>0.5.1</version>
+        </path>
+        <path>
+            <groupId>com.example</groupId>
+            <artifactId>my-craftcommand-extension-processor</artifactId>
+            <version>1.0.0</version>
+        </path>
+    </annotationProcessorPaths>
+    ```
+  </Step>
+</Steps>
+
+## SPI loading
+
+`SpiLoader` is the internal utility that discovers extension handlers during annotation processing. It uses `ServiceLoader` with an explicit class loader and silently skips any `ServiceConfigurationError`, ensuring that one misconfigured extension does not prevent the rest of the build from succeeding.
+
+```java
+public final class SpiLoader {
+
+    /** Loads all registered ParameterAnnotationHandler instances. */
+    public static List<ParameterAnnotationHandler<?>> loadParameterHandlers(ClassLoader classLoader) {
+        List<ParameterAnnotationHandler<?>> list = new ArrayList<>();
+        for (ParameterAnnotationHandler<?> h :
+                ServiceLoader.load(ParameterAnnotationHandler.class, classLoader)) {
+            list.add(h);
+        }
+        return list;
+    }
+
+    /** Loads all registered MethodAnnotationHandler instances. */
+    public static List<MethodAnnotationHandler<?>> loadMethodHandlers(ClassLoader classLoader) {
+        List<MethodAnnotationHandler<?>> list = new ArrayList<>();
+        for (MethodAnnotationHandler<?> h :
+                ServiceLoader.load(MethodAnnotationHandler.class, classLoader)) {
+            list.add(h);
+        }
+        return list;
+    }
+}
+```
+
+`SpiLoader` is used exclusively at compile time by `BaseCommandProcessor`. It is never present in the runtime classpath of the application.

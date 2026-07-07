@@ -1,0 +1,289 @@
+---
+title: "Building Custom Argument Resolvers for CraftCommand"
+sidebarTitle: "Custom Resolvers"
+description: "Extend CraftCommand's type system by implementing ArgumentResolver and ArgumentResolverProvider to parse custom Java types from command arguments and provide tab completions."
+---
+
+Out of the box CraftCommand handles Java primitive types, their wrapper classes, `String`, and platform-specific types such as `Player` or `World`. Custom resolvers extend this to any Java class your commands need — value objects, enums, domain types, or multi-coordinate structures — without touching the generated wrapper code.
+
+## ArgumentResolver interface
+
+`ArgumentResolver<S, T>` is the core contract for converting raw string arguments into typed values.
+
+```java
+public interface ArgumentResolver<S, T> {
+
+    /**
+     * Converts string arguments into a value of type T.
+     *
+     * @param sender  the command sender
+     * @param args    the full argument array available to this resolver
+     * @param current the specific argument string being resolved
+     * @return the resolved value
+     * @throws Exception if resolution fails (wrapped in CommandException by the manager)
+     */
+    T resolve(S sender, String[] args, String current) throws Exception;
+
+    /**
+     * Returns tab-completion suggestions for this parameter position.
+     * Defaults to an empty list.
+     */
+    default List<String> suggest(S sender, String[] args, String current) {
+        return Collections.emptyList();
+    }
+
+    /**
+     * The number of consecutive arguments this resolver consumes.
+     * Defaults to 1.
+     */
+    default int getWidth() {
+        return 1;
+    }
+}
+```
+
+<CardGroup cols={3}>
+  <Card title="resolve()" icon="wrench">
+    Parses `current` (and optionally the wider `args` array for multi-arg resolvers) into the target type. Throw any `Exception` on failure; the manager wraps it in a `CommandException`.
+  </Card>
+  <Card title="suggest()" icon="list">
+    Returns candidate completions for the current input. The list is filtered by `CommandManager.filterSuggestions()` before being sent to the client.
+  </Card>
+  <Card title="getWidth()">
+    How many argument slots this resolver occupies. The argument index advances by `getWidth()` after resolution. Most resolvers return `1`; coordinate-style types may return `2` or more.
+  </Card>
+</CardGroup>
+
+## Single-argument resolver
+
+A single-argument resolver (the default `getWidth() = 1`) reads exactly one token from the argument list. Registering a resolver for an enum type is a common example:
+
+```java
+// Resolver for a custom GameMode-style enum
+manager.registerResolver(MyGameMode.class, new ArgumentResolver<Object, MyGameMode>() {
+    @Override
+    public MyGameMode resolve(Object sender, String[] args, String current) throws Exception {
+        return MyGameMode.valueOf(current.toUpperCase());
+    }
+
+    @Override
+    public List<String> suggest(Object sender, String[] args, String current) {
+        List<String> names = new ArrayList<>();
+        for (MyGameMode mode : MyGameMode.values()) {
+            names.add(mode.name().toLowerCase());
+        }
+        return names;
+    }
+});
+```
+
+When registered, any command parameter typed `MyGameMode` is resolved through this handler automatically.
+
+## Multi-argument resolver (width > 1)
+
+When a type is represented by several consecutive tokens, override `getWidth()` to consume the correct number of slots. The manager passes a sub-array of exactly `getWidth()` elements as `args` to `resolve()`.
+
+The `Point` type from the integration tests is a real example of a two-argument resolver:
+
+```java
+// Point.java
+public class Point {
+    public final double x;
+    public final double y;
+
+    public Point(double x, double y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+```
+
+```java
+// Register a width-2 resolver for Point
+manager.registerResolver(Point.class, new ArgumentResolver<Object, Point>() {
+    @Override
+    public Point resolve(Object sender, String[] args, String current) {
+        if (args.length < 2) {
+            throw new IllegalArgumentException("Point requires 2 arguments: <x> <y>");
+        }
+        try {
+            double x = Double.parseDouble(args[0]);
+            double y = Double.parseDouble(args[1]);
+            return new Point(x, y);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid Point coordinate format");
+        }
+    }
+
+    @Override
+    public int getWidth() {
+        return 2;
+    }
+});
+```
+
+In a command like `/test point 10.5 20.5 hello`, the argument index advances by `2` after the `Point` is resolved, so the trailing `String` parameter reads `"hello"` from `args[2]`:
+
+```java
+@Subcommand("point")
+public void runPoint(Object sender, Point pt, String msg) {
+    // pt.x == 10.5, pt.y == 20.5, msg == "hello"
+}
+```
+
+<Note>
+  `args` passed to `resolve()` for a multi-argument resolver is a sub-array of length `getWidth()`, **not** the full argument list. Use `args[0]`, `args[1]`, etc. rather than absolute indices.
+</Note>
+
+## Registering resolvers
+
+Call `manager.registerResolver(Class<T>, ArgumentResolver<S, T>)` before executing any commands. Resolver lookup uses the following priority:
+
+<Steps>
+  <Step title="Exact class match">
+    The resolver registered for the exact class of the parameter is returned first.
+  </Step>
+  <Step title="Class hierarchy match">
+    If no exact match exists, the manager walks the registered types and returns the first entry whose key `isAssignableFrom` the parameter type (handles superclass and interface relationships).
+  </Step>
+  <Step title="Dynamic provider match">
+    Registered `ArgumentResolverProvider` instances are queried in declaration order. The first non-null response wins.
+  </Step>
+  <Step title="Sender fallback">
+    If the parameter type is assignable from the sender, the sender itself is returned. Otherwise an `IllegalArgumentException` is thrown.
+  </Step>
+</Steps>
+
+```java
+// Register a resolver for CustomInterface;
+// any parameter typed CustomInterface or a subtype will use this resolver
+manager.registerResolver(TestCommand.CustomInterface.class,
+        (sender, args, current) -> new TestCommand.CustomImpl(current));
+```
+
+<Tip>
+  Register all resolvers **before** calling `manager.register(commandInstance)`. The generated wrapper calls into `manager.resolveParameter()` at execution time, so the resolvers must be present when the first command execution arrives.
+</Tip>
+
+## Dynamic providers (ArgumentResolverProvider)
+
+`ArgumentResolverProvider<S>` lets you handle entire families of types with a single registration. It is called only when no explicit resolver matches.
+
+```java
+// Provide a resolver for every enum type automatically
+manager.registerProvider(type -> {
+    if (type.isEnum()) {
+        return (sender, args, current) ->
+                Enum.valueOf((Class<Enum>) type, current.toUpperCase());
+    }
+    return null; // signal: this provider cannot handle the type
+});
+```
+
+The provider receives the raw `Class<?>` of the parameter. Return an `ArgumentResolver` to handle it, or `null` to pass to the next provider in the chain.
+
+Common use cases for providers:
+
+- All `Enum` subtypes (as above)
+- Types that implement a common interface (e.g., all `Nameable` objects)
+- Generic container types resolved by inspecting the class at runtime
+
+## Local resolvers (@Resolve on methods)
+
+Rather than registering a global resolver, you can scope a resolver to a single command class by annotating a method with `@Resolve`. The processor detects such methods and wires them up for every matching parameter within that class (and inherited by nested sub-command classes).
+
+<Tabs>
+  <Tab title="Implicit binding">
+    Annotate a method with `@Resolve` and no argument. The return type becomes the key — any parameter of that type in the command class will use this method as its resolver.
+
+    ```java
+    // Implicitly resolves any `CustomImpl` parameter in this class
+    @Resolve
+    public CustomImpl resolveCustom(String current) {
+        return new CustomImpl("local_" + current);
+    }
+
+    @Subcommand("custom")
+    public void runCustom(Object sender, CustomImpl custom) {
+        // custom.getName() == "local_hello" for input "hello"
+    }
+    ```
+  </Tab>
+  <Tab title="Explicit binding">
+    Annotate a **parameter** with `@Resolve("methodName")` to route that specific parameter to a named method, regardless of type.
+
+    ```java
+    public CustomImpl resolveCustomParameter(String current) {
+        return new CustomImpl("resolved_" + current);
+    }
+
+    @Subcommand("param-resolve")
+    public void runParamResolve(Object sender,
+                                @Resolve("resolveCustomParameter") CustomImpl custom) {
+        // custom.getName() == "resolved_hello"
+    }
+    ```
+  </Tab>
+  <Tab title="Sender resolver">
+    A local resolver method can also target the first (sender) parameter by accepting the raw sender as its argument:
+
+    ```java
+    public CustomSender resolveSender(Object sender) {
+        return new CustomSender(sender.toString() + "_resolved");
+    }
+
+    @Subcommand("sender-resolve")
+    public void runSenderResolve(@Resolve("resolveSender") CustomSender sender) {
+        // sender.getName() == "mySender_resolved"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+Local resolvers are inherited by nested sub-command classes. A nested class can override a parent resolver by declaring its own `@Resolve`-annotated method with the same return type:
+
+```java
+@Subcommand("nested-override")
+public class NestedOverride {
+    // Overrides the parent's resolveCustom for this scope only
+    @Resolve
+    public CustomImpl resolveCustomOverride(String current) {
+        return new CustomImpl("override_" + current);
+    }
+
+    @Default
+    public void execute(Object sender, CustomImpl custom) {
+        // custom.getName() == "override_hello"
+    }
+}
+```
+
+## Tab completion from resolvers
+
+Implement `suggest()` to return meaningful completions. The returned list does **not** need to be pre-filtered; `CommandManager.filterSuggestions()` trims it to entries that start with the current partial input (case-insensitive).
+
+```java
+manager.registerResolver(MyGameMode.class, new ArgumentResolver<Object, MyGameMode>() {
+    @Override
+    public MyGameMode resolve(Object sender, String[] args, String current) throws Exception {
+        return MyGameMode.valueOf(current.toUpperCase());
+    }
+
+    @Override
+    public List<String> suggest(Object sender, String[] args, String current) {
+        // Return all values; the framework filters them by 'current'
+        List<String> suggestions = new ArrayList<>();
+        for (MyGameMode mode : MyGameMode.values()) {
+            suggestions.add(mode.name().toLowerCase());
+        }
+        return suggestions;
+    }
+});
+```
+
+You can invoke the filter helper manually when building completions from dynamic sources:
+
+```java
+List<String> all = fetchOnlinePlayers(); // ["Alice", "Bob", "Charlie"]
+return CommandManager.filterSuggestions(all, current); // current="a" → ["Alice"]
+```

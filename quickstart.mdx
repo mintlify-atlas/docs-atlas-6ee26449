@@ -1,47 +1,235 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with CraftCommand in Minutes"
+sidebarTitle: "Quickstart"
+description: "Learn how to install CraftCommand, write your first annotated command class, and execute it in a standalone Java application in under 5 minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+This guide uses the **Standalone** platform — no Minecraft server required. You will define an annotated command class, wire up the annotation processor in Maven, and execute your first command from a plain `main` method. The same annotation model applies to the Bukkit and Paper platforms; only the runtime dependency and processor artifact change.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+  <Step title="Add the BOM">
+    Import the `craftcommand-bom` into your project's `<dependencyManagement>` block. This lets you declare all other CraftCommand dependencies **without specifying a version** on each one.
 
-    ```bash
-    npm install your-package
+    ```xml pom.xml
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>io.github.projectunified</groupId>
+                <artifactId>craftcommand-bom</artifactId>
+                <version>0.5.1</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
     ```
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
 
-    ```bash
-    your-cli init
+  <Step title="Add the runtime and annotation dependencies">
+    Add `craftcommand-annotations` (contains `@Command`, `@Subcommand`, `@Default`, `@Optional`, etc.) and `craftcommand-standalone-runtime` (contains `StandaloneCommandManager` and `StandaloneCommand`) to your `<dependencies>`. Because the BOM manages versions, no `<version>` tag is needed here.
+
+    ```xml pom.xml
+    <dependencies>
+        <dependency>
+            <groupId>io.github.projectunified</groupId>
+            <artifactId>craftcommand-annotations</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.github.projectunified</groupId>
+            <artifactId>craftcommand-standalone-runtime</artifactId>
+        </dependency>
+    </dependencies>
     ```
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
 
-    ```bash
-    your-cli start
+  <Step title="Configure the annotation processor">
+    Register `craftcommand-standalone-processor` as an annotation processor path in the `maven-compiler-plugin`. The processor runs during compilation and generates the `*_Standalone` wrapper classes — it must be in `<annotationProcessorPaths>`, not in `<dependencies>`.
+
+    ```xml pom.xml
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>io.github.projectunified</groupId>
+                            <artifactId>craftcommand-standalone-processor</artifactId>
+                            <version>0.5.1</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+    ```
+  </Step>
+
+  <Step title="Write your command class">
+    Annotate a plain Java class with `@Command` to declare the root command name and description. Mark the fallback method with `@Default` and individual subcommands with `@Subcommand`. Use `@Optional` to make a parameter optional with a default value, and `@Min` (from the validation module) to enforce a numeric lower bound.
+
+    The example below is taken directly from the CraftCommand standalone example module:
+
+    ```java CalculatorCommand.java
+    package io.github.projectunified.craftcommand.example.standalone;
+
+    import io.github.projectunified.craftcommand.annotation.*;
+    import io.github.projectunified.craftcommand.validation.annotation.Min;
+    import io.github.projectunified.craftcommand.validation.annotation.ValidateWith;
+
+    import java.util.Arrays;
+    import java.util.List;
+
+    @Command(value = "calc", aliases = {"c"}, description = "A simple CLI calculator demonstrating CraftCommand")
+    public class CalculatorCommand {
+
+        // Operators list for tab-completion suggestions
+        public final List<String> operators = Arrays.asList("add", "subtract", "multiply", "divide");
+
+        // Custom resolver: converts the raw sender object to a typed CustomSender
+        public CustomSender resolveSender(Object sender) {
+            return new CustomSender(sender.toString());
+        }
+
+        // Custom validation method used by @ValidateWith on the divide subcommand
+        public void validateDivider(int num) {
+            if (num == 0) {
+                throw new IllegalArgumentException("Cannot divide by zero!");
+            }
+        }
+
+        // Default action: runs when no subcommand matches
+        @Default
+        public void execute(Object sender, int num1, int num2) {
+            System.out.println("Result: " + (num1 + num2));
+        }
+
+        @Subcommand(value = "add")
+        public void add(Object sender, int num1, int num2) {
+            System.out.println("Result: " + (num1 + num2));
+        }
+
+        @Subcommand(value = "sub", aliases = {"subtract"})
+        public void subtract(Object sender, int num1, int num2) {
+            System.out.println("Result: " + (num1 - num2));
+        }
+
+        @Subcommand(value = "mul", aliases = {"multiply"})
+        public void multiply(Object sender, int num1, int num2) {
+            System.out.println("Result: " + (num1 * num2));
+        }
+
+        @Subcommand(value = "div", aliases = {"divide"})
+        public void divide(Object sender, int num1, @ValidateWith("validateDivider") int num2) {
+            System.out.println("Result: " + ((double) num1 / num2));
+        }
+
+        // @Suggest("operators") pulls completions from the field named "operators"
+        @Subcommand(value = "op")
+        public void runOp(Object sender, @Suggest("operators") String op, int num1, int num2) {
+            switch (op.toLowerCase()) {
+                case "add":      add(sender, num1, num2);      break;
+                case "subtract": subtract(sender, num1, num2); break;
+                case "multiply": multiply(sender, num1, num2); break;
+                case "divide":   divide(sender, num1, num2);   break;
+                default: throw new IllegalArgumentException("Unknown operator: " + op);
+            }
+        }
+
+        // @Optional gives the prefix a default value; @Greedy consumes all remaining tokens
+        @Subcommand(value = "print")
+        public void print(Object sender, @Optional("Result:") String prefix, @Greedy String text) {
+            System.out.println(prefix + " " + text);
+        }
+
+        // Nested class becomes a nested subcommand group
+        @Subcommand("advanced")
+        public class AdvancedCommands {
+            @Default
+            public void execute(Object sender) {
+                System.out.println("Advanced operations: power, sqrt");
+            }
+
+            @Subcommand("power")
+            public void power(Object sender, double base, double exponent) {
+                System.out.println("Result: " + Math.pow(base, exponent));
+            }
+
+            @Subcommand("sqrt")
+            public void sqrt(Object sender, @Min(0) double number) {
+                System.out.println("Result: " + Math.sqrt(number));
+            }
+        }
+
+        public static class CustomSender {
+            private final String name;
+            public CustomSender(String name) { this.name = name; }
+            public String getName() { return name; }
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Register and run">
+    Create a `StandaloneCommandManager`, optionally register custom type providers, call `manager.register()` with your command instance, then retrieve the command by name and execute or tab-complete it.
+
+    ```java CLIApp.java
+    package io.github.projectunified.craftcommand.example.standalone;
+
+    import io.github.projectunified.craftcommand.standalone.StandaloneCommand;
+    import io.github.projectunified.craftcommand.standalone.StandaloneCommandManager;
+
+    import java.util.Arrays;
+    import java.util.List;
+
+    public class CLIApp {
+        public static void main(String[] args) {
+            StandaloneCommandManager manager = new StandaloneCommandManager();
+
+            // Register a dynamic provider so the framework can parse Java Enum arguments
+            manager.registerProvider(type -> {
+                if (type.isEnum()) {
+                    return (sender, cmdArgs, current) ->
+                            Enum.valueOf((Class<Enum>) type, current.toUpperCase());
+                }
+                return null;
+            });
+
+            // Register the annotated command class
+            manager.register(new CalculatorCommand());
+
+            // Retrieve by primary name (or alias)
+            StandaloneCommand cmd = manager.getCommand("calc");
+
+            // Execute: "calc add 40 2"  →  prints "Result: 42"
+            cmd.execute("Console", new String[]{"add", "40", "2"});
+
+            // Execute: "calc sub 100 50"  →  prints "Result: 50"
+            cmd.execute("Console", new String[]{"sub", "100", "50"});
+
+            // Execute: "calc advanced sqrt 16"  →  prints "Result: 4.0"
+            cmd.execute("Console", new String[]{"advanced", "sqrt", "16"});
+
+            // Tab-completion for "calc op "  →  suggests ["add", "subtract", "multiply", "divide"]
+            List<String> suggestions = cmd.tabComplete("Console", new String[]{"op", ""});
+            System.out.println("Suggestions: " + suggestions);
+        }
+    }
     ```
   </Step>
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## What happens at compile time
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+When Maven compiles `CalculatorCommand.java`, `craftcommand-standalone-processor` detects the `@Command("calc")` annotation and generates a new class called `CalculatorCommand_Standalone` in your build output. That class implements `StandaloneCommand` and contains switch-based dispatch logic that maps string subcommand tokens to direct calls to your `add()`, `subtract()`, `multiply()`, etc. methods. It also wires in any `@Min` / `@ValidateWith` validation checks before the method body runs.
+
+At runtime, `StandaloneCommandManager.register()` performs exactly one `Class.forName("...CalculatorCommand_Standalone")` call to locate the generated class, constructs it, and registers it. From that point on, every `cmd.execute()` and `cmd.tabComplete()` call goes through ordinary generated Java — no reflection per invocation.
+
+<Tip>
+  For the complete Standalone platform guide — including custom type resolvers, error handlers, and the `registerProvider` API — see [Standalone Platform](/platforms/standalone).
+</Tip>
+
+<Tip>
+  To install CraftCommand for Bukkit/Spigot or Paper, or to add the optional validation module to any platform, see the [Installation](/installation) guide.
 </Tip>

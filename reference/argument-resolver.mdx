@@ -1,0 +1,274 @@
+---
+title: "ArgumentResolver and ArgumentResolverProvider API Reference"
+sidebarTitle: "ArgumentResolver"
+description: "API reference for ArgumentResolver<S,T> and ArgumentResolverProvider<S> — the interfaces for converting raw command argument strings into typed Java values."
+---
+
+`ArgumentResolver<S, T>` is a functional-style interface that teaches CraftCommand how to parse a custom type from command argument strings. Implement it for any type that CraftCommand does not handle out of the box, register the implementation with `CommandManager.registerResolver()` or `CommandManager.registerProvider()`, and the annotation processor will call it automatically wherever that type appears as a command parameter.
+
+---
+
+## ArgumentResolver\<S, T\>
+
+```java
+public interface ArgumentResolver<S, T> {
+    T resolve(S sender, String[] args, String current) throws Exception;
+
+    default List<String> suggest(S sender, String[] args, String current) {
+        return Collections.emptyList();
+    }
+
+    default int getWidth() {
+        return 1;
+    }
+}
+```
+
+`S` is the platform sender type (e.g. `Object` for Standalone, `CommandSender` for Bukkit,
+`CommandSourceStack` for Paper). `T` is the Java type this resolver produces.
+
+---
+
+### resolve
+
+The required method. Converts the current argument string — and optionally additional consecutive
+arguments when `getWidth() > 1` — into a value of type `T`.
+
+```java
+T resolve(S sender, String[] args, String current) throws Exception;
+```
+
+<ParamField path="sender" type="S" required>
+  The command sender executing or tab-completing the command.
+</ParamField>
+
+<ParamField path="args" type="String[]" required>
+  When `getWidth()` is `1`: the full argument array for the command invocation; `current` is the
+  relevant entry at the current index.  
+  When `getWidth()` is `> 1`: a sliced sub-array `args[argIdx..argIdx+width)` containing exactly
+  `width` entries. `current` is `args[width - 1]` (the last entry in the slice).
+</ParamField>
+
+<ParamField path="current" type="String" required>
+  The argument string at the current resolution index. For single-width resolvers this is always
+  equal to `args[index]`. Throw any exception — including `CommandException` — to signal a
+  resolution failure; the error handler will receive it.
+</ParamField>
+
+**Returns** the resolved value of type `T`.
+
+---
+
+### suggest
+
+Provides tab-completion candidates for this parameter. The default implementation returns an empty
+list. The candidates you return are passed through `CommandManager.filterSuggestions()` before
+being sent to the client, so you can return the full set and rely on prefix filtering to narrow it.
+
+```java
+default List<String> suggest(S sender, String[] args, String current)
+```
+
+<ParamField path="sender" type="S" required>
+  The command sender requesting tab completion.
+</ParamField>
+
+<ParamField path="args" type="String[]" required>
+  All arguments entered so far (same slicing rules as `resolve`).
+</ParamField>
+
+<ParamField path="current" type="String" required>
+  The partial argument string typed at the current position.
+</ParamField>
+
+**Returns** a `List<String>` of suggestion candidates, or an empty list if none apply.
+
+---
+
+### getWidth
+
+Returns the number of consecutive arguments this resolver consumes. The default is `1`. When you
+return a value greater than `1`, `CommandManager.resolveParameter()` passes a sub-array of exactly
+`width` entries to `resolve()` and advances `indexHolder[0]` by `width`.
+
+```java
+default int getWidth()
+```
+
+**Returns** a positive integer; `1` for all single-argument types.
+
+---
+
+## ArgumentResolverProvider\<S\>
+
+```java
+public interface ArgumentResolverProvider<S> {
+    ArgumentResolver<S, ?> getResolver(Class<?> type);
+}
+```
+
+`ArgumentResolverProvider<S>` is a factory that `CommandManager` consults at runtime when no exact
+or hierarchy match is found in the registered resolver map. It is the right tool for entire class
+families — enums, sealed types, interface hierarchies — where registering every concrete class
+individually would be impractical.
+
+### getResolver
+
+```java
+ArgumentResolver<S, ?> getResolver(Class<?> type);
+```
+
+<ParamField path="type" type="Class<?>" required>
+  The target class that `CommandManager.getResolver()` is trying to resolve. Inspect it (e.g.
+  `type.isEnum()`) to decide whether this provider can handle it.
+</ParamField>
+
+**Returns** a resolver for `type`, or `null` if this provider does not handle it. `CommandManager`
+tries providers in registration order and uses the first non-null result.
+
+#### Enum provider example
+
+```java
+manager.registerProvider(type -> {
+    if (type.isEnum()) {
+        return (sender, args, current) ->
+            Enum.valueOf((Class<Enum>) type, current.toUpperCase());
+    }
+    return null;
+});
+```
+
+After this registration, any enum parameter in a `@Command`-annotated class is automatically
+resolved from the argument string without a dedicated `registerResolver` call per enum type.
+
+---
+
+## Multi-argument resolvers
+
+When a logical parameter spans more than one raw argument (e.g. a 2D point expressed as `<x> <y>`),
+override `getWidth()` to return the number of arguments you need.
+
+`CommandManager.resolveParameter()` uses the width to:
+1. Verify that at least `width` arguments remain before calling `resolve()`; throws
+   `CommandException` with the `"missing-argument"` key otherwise.
+2. Slice `args[argIdx..argIdx+width)` and pass the sub-array as `args` to `resolve()`. `current`
+   is `subArgs[width - 1]` (the last item in the slice).
+3. Advance `indexHolder[0]` by `width` so the next parameter starts at the correct position.
+
+### Complete Point resolver example
+
+```java
+public class Point {
+    public final double x;
+    public final double y;
+
+    public Point(double x, double y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+```
+
+```java
+manager.registerResolver(Point.class, new ArgumentResolver<Object, Point>() {
+
+    @Override
+    public Point resolve(Object sender, String[] args, String current) {
+        if (args.length < 2) {
+            throw new IllegalArgumentException("Point requires 2 arguments: <x> <y>");
+        }
+        try {
+            double x = Double.parseDouble(args[0]);
+            double y = Double.parseDouble(args[1]);
+            return new Point(x, y);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid Point coordinate format");
+        }
+    }
+
+    @Override
+    public int getWidth() {
+        return 2; // consumes two consecutive arguments
+    }
+});
+```
+
+With this resolver registered, a command method parameter typed `Point` automatically consumes the
+next two tokens from the argument list. A third parameter following the `Point` in the same method
+receives the argument at `index + 2`.
+
+<Note>
+  The `suggest()` method receives the same sliced sub-array as `resolve()`, so you can inspect
+  `args[0]` to determine which coordinate position is currently being typed and return appropriate
+  suggestions.
+</Note>
+
+---
+
+## Resolver registration order & priority
+
+`CommandManager.getResolver(Class<T> type)` walks the following priority order, stopping at the
+first match:
+
+1. **Parameter-level `@Resolve` method with an explicit name** — a local resolver method on the
+   command class annotated `@Resolve("resolverName")` where the name matches the `@Param`
+   declaration. Evaluated by the generated wrapper before calling the manager.
+2. **Implicit local `@Resolve` method matching return type** — a local resolver method whose
+   return type matches the parameter type, with no explicit name required. Also evaluated by the
+   generated wrapper.
+3. **`registerResolver()` exact type match** — the type passed to `registerResolver` equals `type`
+   exactly (`resolvers.get(type) != null`).
+4. **`registerResolver()` class hierarchy match** — any registered key `K` where
+   `K.isAssignableFrom(type)` is `true` (superclass or interface). Iterates the resolver map in
+   arbitrary order; register the most specific type explicitly when ambiguity is possible.
+5. **`registerProvider()` dynamic match** — providers are queried in registration order; the first
+   non-null result wins.
+6. **Sender-type fallback** — if none of the above matched, a synthetic resolver is returned that
+   casts the sender to `T` if `type.isInstance(sender)`, or throws `IllegalArgumentException`.
+
+<Warning>
+  Step 4 iterates a `HashMap`, so when multiple registered keys satisfy `isAssignableFrom`, the
+  result is non-deterministic. If you have a resolver for an interface and a resolver for a
+  concrete subtype, register the concrete subtype explicitly to guarantee it takes priority via
+  step 3.
+</Warning>
+
+---
+
+## Built-in type resolvers
+
+The following types are handled at compile time by the annotation processor's `TypeSupport` class.
+You do not need to call `registerResolver` for them — the processor emits inline parsing code
+directly into the generated wrapper.
+
+| Type | Parse method |
+|------|-------------|
+| `String` | Direct assignment |
+| `int` / `Integer` | `Integer.parseInt()` |
+| `long` / `Long` | `Long.parseLong()` |
+| `double` / `Double` | `Double.parseDouble()` |
+| `float` / `Float` | `Float.parseFloat()` |
+| `boolean` / `Boolean` | `Boolean.parseBoolean()` (validates `"true"`/`"false"`) |
+| `short` / `Short` | `Short.parseShort()` |
+| `byte` / `Byte` | `Byte.parseByte()` |
+| `char` / `Character` | Single-character validation + `charAt(0)` |
+
+### Bukkit / Paper platform types
+
+The Bukkit and Paper processors extend `TypeSupport` with the following additional built-in
+resolutions that are emitted as inline helper-method calls in the generated wrapper:
+
+| Type | Resolution |
+|------|-----------|
+| `org.bukkit.entity.Player` | `Bukkit.getPlayer(name)` — throws if not online |
+| `org.bukkit.OfflinePlayer` | `Bukkit.getOfflinePlayer(name)` — throws if never played |
+| `org.bukkit.World` | `Bukkit.getWorld(name)` — throws if not found |
+| `org.bukkit.Location` | 4-argument parse: `world x y z` (width = 4) |
+| `org.bukkit.command.CommandSender` | Sender cast / fallback |
+| `io.papermc.paper.command.brigadier.CommandSourceStack` | Brigadier source (Paper only) |
+
+<Note>
+  Tab-completion for `Player` and `World` is also generated automatically: the wrapper emits calls
+  to private `suggestPlayers()` and `suggestWorlds()` helper methods that filter online player
+  names and loaded world names respectively.
+</Note>

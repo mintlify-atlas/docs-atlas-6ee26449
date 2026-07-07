@@ -1,0 +1,427 @@
+---
+title: "CraftCommand for Bukkit and Spigot Minecraft Plugins"
+sidebarTitle: "Bukkit / Spigot"
+description: "Register CraftCommand commands in Bukkit/Spigot plugins using BukkitCommandManager. Includes Player, World, and Location resolvers, @Permission support, and syncCommand()."
+---
+
+The Bukkit platform integrates CraftCommand directly with Bukkit's `CommandMap`, enabling you to register commands programmatically without the verbose boilerplate of implementing `CommandExecutor` and `TabCompleter` by hand. The sender type on this platform is `org.bukkit.command.CommandSender`, which covers players, the console, and command blocks. Built-in resolvers handle common Bukkit types like `Player`, `World`, and `Location` automatically.
+
+<Warning>
+  Commands registered through `CommandMap` must still have a corresponding entry in your `plugin.yml` file. The server reads `plugin.yml` during start-up to build its internal command table. Entries missing from `plugin.yml` may not be recognised by some server implementations or tab-completion clients.
+</Warning>
+
+---
+
+## Maven Setup
+
+<Steps>
+  <Step title="Add the dependencies">
+    `craftcommand-annotations` provides the compile-time annotations (`@Command`, `@Subcommand`, etc.). `craftcommand-bukkit-runtime` provides `BukkitCommandManager`. `craftcommand-bukkit-annotations` is optional but required if you want to use `@Permission`.
+
+    ```xml
+    <dependencies>
+        <!-- Core annotations (compile-time only) -->
+        <dependency>
+            <groupId>io.github.projectunified</groupId>
+            <artifactId>craftcommand-annotations</artifactId>
+            <version>0.5.1</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Bukkit runtime: BukkitCommandManager and built-in type resolvers -->
+        <dependency>
+            <groupId>io.github.projectunified</groupId>
+            <artifactId>craftcommand-bukkit-runtime</artifactId>
+            <version>0.5.1</version>
+        </dependency>
+
+        <!-- Optional: @Permission annotation support -->
+        <dependency>
+            <groupId>io.github.projectunified</groupId>
+            <artifactId>craftcommand-bukkit-annotations</artifactId>
+            <version>0.5.1</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+    ```
+  </Step>
+
+  <Step title="Configure the annotation processor">
+    Add `craftcommand-bukkit-processor` to `<annotationProcessorPaths>`. At compile time it generates a `ClassName_Executor` class that extends Bukkit's `Command`, wiring all your annotated methods to the right dispatch and tab-completion paths.
+
+    ```xml
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.15.0</version>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>io.github.projectunified</groupId>
+                            <artifactId>craftcommand-bukkit-processor</artifactId>
+                            <version>0.5.1</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Writing a Bukkit Command
+
+The example below is the real `TeleportCommand` from the CraftCommand Bukkit example module. It demonstrates `@Default` with an `@Optional` argument, multiple `@Subcommand` methods, `@Permission` on both the class and individual methods, `@Suggest` for custom completions, `@Greedy` string capture, nested inner-class subcommands, and a local resolver for `Location`.
+
+```java
+package io.github.projectunified.craftcommand.example.bukkit;
+
+import io.github.projectunified.craftcommand.CommandInfo;
+import io.github.projectunified.craftcommand.annotation.*;
+import io.github.projectunified.craftcommand.bukkit.BukkitCommandManager;
+import io.github.projectunified.craftcommand.bukkit.annotation.Permission;
+import io.github.projectunified.craftcommand.validation.annotation.Max;
+import io.github.projectunified.craftcommand.validation.annotation.Min;
+import io.github.projectunified.craftcommand.validation.annotation.ValidateWith;
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.World;
+import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Player;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+@Command(value = "tp", aliases = {"teleport"}, description = "Comprehensive Teleport Commands")
+@Permission("example.tp")
+public class TeleportCommand {
+    // Suggestion provider from a Field
+    public final List<String> modes = Arrays.asList("normal", "silent", "instant");
+    private final BukkitCommandManager commandManager;
+
+    public TeleportCommand(BukkitCommandManager commandManager) {
+        this.commandManager = commandManager;
+    }
+
+    // Context-aware suggestion method — filters players within 50 blocks
+    public List<String> getNearPlayers(Player sender, String[] args, String current) {
+        List<String> suggestions = new ArrayList<>();
+        String lower = current.toLowerCase();
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            if (p.getWorld().equals(sender.getWorld())
+                    && p.getLocation().distance(sender.getLocation()) < 50) {
+                if (p.getName().toLowerCase().startsWith(lower)) {
+                    suggestions.add(p.getName());
+                }
+            }
+        }
+        return suggestions;
+    }
+
+    // Default subcommand with optional Player argument
+    @Default
+    public void execute(Player sender, @Optional Player target) {
+        if (target == null) {
+            sender.teleport(sender.getWorld().getSpawnLocation());
+            sender.sendMessage("Teleported to spawn.");
+        } else {
+            sender.teleport(target);
+            sender.sendMessage("Teleported to " + target.getName());
+        }
+    }
+
+    // Subcommand with platform-specific @Permission
+    @Subcommand(value = "here", aliases = {"h"})
+    @Permission("example.tp.here")
+    public void teleportHere(Player sender, Player target) {
+        target.teleport(sender);
+        sender.sendMessage("Teleported " + target.getName() + " to you");
+    }
+
+    // Subcommand with no arguments
+    @Subcommand(value = "all")
+    @Permission("example.tp.all")
+    public void teleportAll(Player sender) {
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (!player.equals(sender)) {
+                player.teleport(sender);
+            }
+        }
+        sender.sendMessage("Teleported all online players to you");
+    }
+
+    // Location resolved via the built-in global resolver (consumes 4 args: world x y z)
+    @Subcommand("loc")
+    public void teleportLocation(Player sender, Location location) {
+        sender.teleport(location);
+        sender.sendMessage(String.format("Teleported to %.2f, %.2f, %.2f in %s",
+                location.getX(), location.getY(), location.getZ(),
+                location.getWorld().getName()));
+    }
+
+    // Local resolver for Location — accepts x, y, z plus an optional World
+    public Location resolveLocationLocal(Player sender, double x, double y, double z,
+                                         @Optional World world) {
+        World targetWorld = world != null ? world : sender.getWorld();
+        return new Location(targetWorld, x, y, z);
+    }
+
+    // Uses the local resolver above (min_width = 3, max_width = 4)
+    @Subcommand("loc-local")
+    public void teleportLocationLocal(Player sender,
+                                       @Resolve("resolveLocationLocal") Location location) {
+        sender.teleport(location);
+        sender.sendMessage(String.format("Teleported (local) to %.2f, %.2f, %.2f in %s",
+                location.getX(), location.getY(), location.getZ(),
+                location.getWorld().getName()));
+    }
+
+    // Optional primitive with range validation
+    @Subcommand(value = "player")
+    public void tpPlayer(Player sender, Player target,
+                         @Min(0) @Max(1) @Optional("0") int level) {
+        sender.teleport(target);
+        sender.sendMessage("Teleported to " + target.getName()
+                + " with priority level " + level);
+    }
+
+    // @Greedy captures the rest of the input into one string
+    @Subcommand(value = "msg")
+    public void sendMessage(Player sender, Player target,
+                            @Name("text") @Greedy String message) {
+        target.sendMessage(sender.getName() + " says: " + message);
+        sender.sendMessage("Message sent to " + target.getName());
+    }
+
+    // @Suggest from a field
+    @Subcommand(value = "mode")
+    public void setMode(CommandSender sender, @Suggest("modes") String mode) {
+        sender.sendMessage("Teleport mode set to: " + mode);
+    }
+
+    // @Suggest from a method
+    @Subcommand(value = "near")
+    public void tpNear(Player sender, @Suggest("getNearPlayers") Player target) {
+        sender.teleport(target);
+        sender.sendMessage("Teleported to nearby player: " + target.getName());
+    }
+
+    // Sender is inferred from index-0 parameter type
+    @Subcommand(value = "info")
+    public void getInfo(Player player) {
+        player.sendMessage("Your location is: " + player.getLocation());
+    }
+
+    // Custom permission message
+    @Subcommand("secret")
+    @Permission(value = "example.tp.secret",
+                message = "Access denied! The secret TP area is off-limits.")
+    public void secretTp(Player sender) {
+        sender.sendMessage("Welcome to the secret teleport area.");
+    }
+
+    // Custom validation method
+    public void validateCoordinate(double coord) {
+        if (Math.abs(coord) > 30000000) {
+            throw new IllegalArgumentException("Coordinate cannot exceed 30,000,000!");
+        }
+    }
+
+    @Subcommand("tp-coord")
+    public void tpCoordinate(Player sender,
+                             @ValidateWith("validateCoordinate") double x,
+                             double y, double z) {
+        sender.teleport(new Location(sender.getWorld(), x, y, z));
+        sender.sendMessage(String.format(
+                "Teleported to custom validated coordinates: %.2f, %.2f, %.2f", x, y, z));
+    }
+
+    @Subcommand("help")
+    public void getHelp(CommandSender sender) {
+        sender.sendMessage("--- Teleport Command Help ---");
+        for (CommandInfo info : commandManager.getCommandInfo(this)) {
+            String path = String.join(" ", info.getPath());
+            String usage = info.getUsage();
+            String desc = info.getDescription();
+            sender.sendMessage("/" + path
+                    + (usage.isEmpty() ? "" : " " + usage)
+                    + (desc.isEmpty() ? "" : " - " + desc));
+        }
+    }
+
+    // Nested subcommand inner class
+    @Subcommand("admin")
+    @Permission("example.tp.admin")
+    public class AdminCommands {
+        @Default
+        public void execute(Player sender) {
+            sender.sendMessage("Teleport admin console.");
+        }
+
+        @Subcommand("spawn")
+        public void setSpawn(Player sender, String worldName) {
+            sender.sendMessage("Spawn for world " + worldName + " has been set.");
+        }
+    }
+}
+```
+
+---
+
+## plugin.yml Declaration
+
+Even though CraftCommand registers commands via `CommandMap` at runtime, Bukkit reads `plugin.yml` before the plugin enables. At minimum, declare each top-level command label. Aliases listed here also appear in `/help` output and other server-side tooling.
+
+```yaml
+name: ExamplePlugin
+version: 1.0
+main: io.github.projectunified.craftcommand.example.bukkit.ExamplePlugin
+api-version: 1.20
+```
+
+For richer server-side metadata (description, usage hint, permission), you can expand the commands block:
+
+```yaml
+commands:
+  tp:
+    description: Comprehensive Teleport Commands
+    aliases:
+      - teleport
+    permission: example.tp
+    usage: /<command> [player]
+```
+
+<Warning>
+  If a command label is absent from `plugin.yml`, Bukkit may not include it in the global command index built during start-up. Always declare every top-level command name (and its aliases) in `plugin.yml`, even when using `BukkitCommandManager`.
+</Warning>
+
+---
+
+## Registering in Your Plugin
+
+Create a `BukkitCommandManager` in `onEnable`, register your command instances, and call `syncCommand()` to push the new entries to connected clients. On `onDisable`, call `unregisterAll()` to cleanly remove every command this manager registered.
+
+```java
+package io.github.projectunified.craftcommand.example.bukkit;
+
+import io.github.projectunified.craftcommand.bukkit.BukkitCommandManager;
+import org.bukkit.plugin.java.JavaPlugin;
+
+public class ExamplePlugin extends JavaPlugin {
+    private BukkitCommandManager commandManager;
+
+    @Override
+    public void onEnable() {
+        this.commandManager = new BukkitCommandManager(this);
+
+        // Register your command class instance
+        commandManager.register(new TeleportCommand(commandManager));
+
+        // Push command updates to Brigadier clients (1.13+)
+        commandManager.syncCommand();
+
+        getLogger().info("ExamplePlugin enabled and commands registered!");
+    }
+
+    @Override
+    public void onDisable() {
+        this.commandManager.unregisterAll();
+    }
+}
+```
+
+---
+
+## Built-in Bukkit Type Resolvers
+
+The `craftcommand-bukkit-runtime` module pre-registers resolvers for common Bukkit types. You do not need to add anything extra to your command methods — just declare the parameter type and the runtime handles parsing.
+
+| Parameter type | Resolution logic |
+|----------------|-----------------|
+| `Player` | Looks up an online player by name using `Bukkit.getPlayer(name)`. Fails if no online player matches. |
+| `World` | Looks up a loaded world by name using `Bukkit.getWorld(name)`. |
+| `Location` | Parses four consecutive arguments as `world x y z`. The world is resolved the same way as the `World` resolver. |
+| `CommandSender` | Passes the sender through directly (identity resolver). |
+
+---
+
+## @Permission Annotation
+
+`@Permission` is provided by `craftcommand-bukkit-annotations` and can be placed on a class or an individual method. When the annotation processor generates the `_Executor` wrapper, it inserts a permission check before the annotated handler is called.
+
+<Tabs>
+  <Tab title="Class-level permission">
+    Applying `@Permission` to the class guards every subcommand in that class under the same permission node.
+
+    ```java
+    @Command(value = "tp", aliases = {"teleport"}, description = "Comprehensive Teleport Commands")
+    @Permission("example.tp")
+    public class TeleportCommand {
+        // All subcommands require example.tp
+    }
+    ```
+  </Tab>
+
+  <Tab title="Method-level permission">
+    Applying `@Permission` to a method guards only that subcommand.
+
+    ```java
+    @Subcommand(value = "here", aliases = {"h"})
+    @Permission("example.tp.here")
+    public void teleportHere(Player sender, Player target) {
+        target.teleport(sender);
+        sender.sendMessage("Teleported " + target.getName() + " to you");
+    }
+    ```
+  </Tab>
+
+  <Tab title="Custom error message">
+    Set `message` to override the default "you do not have permission" text.
+
+    ```java
+    @Subcommand("secret")
+    @Permission(
+        value   = "example.tp.secret",
+        message = "Access denied! The secret TP area is off-limits."
+    )
+    public void secretTp(Player sender) {
+        sender.sendMessage("Welcome to the secret teleport area.");
+    }
+    ```
+
+    When a player without `example.tp.secret` runs `/tp secret`, they see:
+    > `Access denied! The secret TP area is off-limits.`
+  </Tab>
+</Tabs>
+
+**Annotation fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `value` | `String` | *(required)* | The Bukkit permission node (e.g. `"myplugin.admin"`). |
+| `message` | `String` | `""` | Custom message sent when permission is denied. When empty, a default message is used. |
+
+---
+
+## BukkitCommandManager API
+
+<CardGroup cols={2}>
+  <Card title="register(Object commandInstance)" icon="plug">
+    Locates the generated `ClassName_Executor` wrapper via class name lookup, instantiates it, and registers it to the server's `CommandMap`. Throws `IllegalArgumentException` if no wrapper class is found.
+  </Card>
+  <Card title="register(Command command)" icon="circle-plus">
+    Registers a raw Bukkit `Command` object directly to the `CommandMap`. Useful for hand-crafted commands or commands built by other libraries. Logs a warning and skips if the label is already registered by this manager.
+  </Card>
+  <Card title="syncCommand()" icon="rotate">
+    Calls `CraftServer#syncCommands()` (if available) to synchronise the server's command tree with connected Brigadier clients. Call this once after all commands are registered in `onEnable`.
+  </Card>
+  <Card title="unregisterAll()" icon="trash">
+    Removes every command registered by this manager from the server's `CommandMap` known-commands table and calls `Command#unregister`. Call in `onDisable` to avoid stale entries if the plugin is reloaded.
+  </Card>
+</CardGroup>

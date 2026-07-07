@@ -1,0 +1,222 @@
+---
+title: "Parameter Validation with @Min, @Max, and @ValidateWith"
+sidebarTitle: "Validation"
+description: "Add compile-time-generated parameter validation to CraftCommand commands using @Min, @Max for numeric bounds and @ValidateWith for custom validation methods."
+---
+
+The validation module is an optional add-on for CraftCommand that generates bounds-checking and custom-validation code directly into the command wrapper at compile time. No runtime reflection is involved — the generated `if`-statements and `try/catch` blocks are plain Java, sitting right alongside the rest of the resolved parameter code.
+
+## Maven setup
+
+Add the annotations artifact to your `<dependencies>` (compile scope) and the processor artifact to the `<annotationProcessorPaths>` of the Maven Compiler Plugin alongside your platform processor. The validation processor registers its handlers through Java SPI, so the platform processor discovers and invokes them automatically during code generation.
+
+```xml
+<dependencies>
+    <!-- Validation annotations (@Min, @Max, @ValidateWith) -->
+    <dependency>
+        <groupId>io.github.projectunified</groupId>
+        <artifactId>craftcommand-validation-annotations</artifactId>
+        <version>0.5.1</version>
+    </dependency>
+</dependencies>
+
+<build>
+    <plugins>
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <configuration>
+                <annotationProcessorPaths>
+                    <!-- Your platform processor (standalone / bukkit / paper) -->
+                    <path>
+                        <groupId>io.github.projectunified</groupId>
+                        <artifactId>craftcommand-standalone-processor</artifactId>
+                        <version>0.5.1</version>
+                    </path>
+                    <!-- Validation processor — loaded via SPI by the platform processor -->
+                    <path>
+                        <groupId>io.github.projectunified</groupId>
+                        <artifactId>craftcommand-validation-processor</artifactId>
+                        <version>0.5.1</version>
+                    </path>
+                </annotationProcessorPaths>
+            </configuration>
+        </plugin>
+    </plugins>
+</build>
+```
+
+<Warning>
+  Validation annotations only work when `craftcommand-validation-processor` is present on the annotation processor path. If the processor is omitted, `@Min`, `@Max`, and `@ValidateWith` are silently ignored at compile time — no validation code will be emitted and no error will be reported.
+</Warning>
+
+## @Min
+
+`@Min` validates that a numeric parameter value is **at least** the specified minimum (inclusive). If the value is below the threshold the generated code throws a `CommandException`.
+
+| Attribute | Type | Required | Description |
+|---|---|---|---|
+| `value` | `double` | ✅ | The minimum allowed value (inclusive). |
+| `message` | `String` | ❌ | Error message or translation key. Defaults to the built-in key `validation.min`. |
+
+**Placeholders** available in `message`:
+- `%1$s` — the parameter name
+- `%2$s` — the minimum value
+
+```java
+@Subcommand("give")
+public void giveItem(Object sender, String item, @Min(0) double amount) {
+    // amount < 0 → CommandException: "amount cannot be less than 0.0"
+}
+```
+
+The generated code is equivalent to:
+
+```java
+if (amount < 0.0) {
+    throw new CommandException(manager.formatMessage(
+        "validation.min", "%s cannot be less than %s", "amount", 0.0));
+}
+```
+
+## @Max
+
+`@Max` validates that a numeric parameter value is **at most** the specified maximum (inclusive). If the value exceeds the threshold the generated code throws a `CommandException`.
+
+| Attribute | Type | Required | Description |
+|---|---|---|---|
+| `value` | `double` | ✅ | The maximum allowed value (inclusive). |
+| `message` | `String` | ❌ | Error message or translation key. Defaults to the built-in key `validation.max`. |
+
+**Placeholders** available in `message`:
+- `%1$s` — the parameter name
+- `%2$s` — the maximum value
+
+```java
+@Subcommand("speed")
+public void setSpeed(Object sender, @Max(10) double speed) {
+    // speed > 10.0 → CommandException: "speed cannot be greater than 10.0"
+}
+```
+
+The generated code is equivalent to:
+
+```java
+if (speed > 10.0) {
+    throw new CommandException(manager.formatMessage(
+        "validation.max", "%s cannot be greater than %s", "speed", 10.0));
+}
+```
+
+## @ValidateWith
+
+`@ValidateWith` delegates validation to a method you define inside the command class. If the method throws any exception, the exception message is captured and wrapped in a `CommandException`.
+
+| Attribute | Type | Required | Description |
+|---|---|---|---|
+| `value` | `String` | ✅ | Name of the validation method in the command class. |
+| `message` | `String` | ❌ | Error message or translation key. Defaults to `validation.custom`. When empty, `%2$s` (the exception message) is used verbatim. |
+
+**Placeholders** available in `message`:
+- `%1$s` — the parameter name
+- `%2$s` — the exception message thrown by the validation method
+
+The validation method may accept **0, 1, or 2 parameters**:
+
+| Signature | When to use |
+|---|---|
+| `void method()` | No access to the value or sender needed |
+| `void method(T value)` | Access to the parameter value |
+| `void method(S sender, T value)` | Access to both sender and value |
+
+```java
+// Validation method — throws if invalid
+public void validateStringLength(String input) {
+    if (input.length() > 5) {
+        throw new IllegalArgumentException("Input is too long");
+    }
+}
+
+@Subcommand("tag")
+public void setTag(Object sender,
+                   @ValidateWith("validateStringLength") String tag) {
+    // tag.length() > 5 → CommandException: "Input is too long"
+}
+```
+
+## Combining validators
+
+Multiple validation annotations can be stacked on the same parameter. They are applied in order after the parameter is resolved:
+
+```java
+@Subcommand("validate")
+public void runValidate(Object sender,
+                        @Min(5) @Max(10) int range,
+                        @ValidateWith("validateStringLength") String text) {
+    // range < 5  → "range cannot be less than 5.0"
+    // range > 10 → "range cannot be greater than 10.0"
+    // text.length() > 5 → "Input is too long"
+}
+```
+
+Validations run in annotation declaration order. `@Min` is checked before `@Max`, and both are checked before `@ValidateWith`.
+
+## Custom error messages
+
+There are two distinct modes for the `message` attribute:
+
+<Tabs>
+  <Tab title="Literal message">
+    When `message` is set to a plain string that does **not** match any key in the message dictionary, it is used verbatim as the error text.
+
+    ```java
+    @Min(value = 5, message = "Value is too small!")
+    int val
+    // Throws CommandException("Value is too small!")
+    ```
+  </Tab>
+  <Tab title="Translation key">
+    When `message` is set to a key that your `CommandManager` recognises, the manager's `formatMessage` method substitutes the appropriate template.
+
+    ```java
+    @Max(value = 10, message = "error.range.max")
+    int val2
+    // Resolved by manager.formatMessage("error.range.max", ...)
+    ```
+
+    Override `formatMessage` to plug in your own message provider:
+
+    ```java
+    StandaloneCommandManager manager = new StandaloneCommandManager() {
+        private final Map<String, String> messages = new HashMap<>();
+
+        @Override
+        public String formatMessage(String key, String defaultValue, Object... args) {
+            String template = messages.get(key);
+            if (template != null) {
+                try {
+                    return String.format(template, args);
+                } catch (Exception e) {
+                    return template;
+                }
+            }
+            return super.formatMessage(key, defaultValue, args);
+        }
+    };
+
+    // Register a custom template for the "error.range.max" key
+    // %2$s refers to the max value (second format arg)
+    manager.messages.put("error.range.max", "Value is too big: limit is %2$s");
+    ```
+
+    With the entry above, a failed `@Max(value = 10, message = "error.range.max")` produces:
+
+    ```
+    Value is too big: limit is 10.0
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  The default templates when `message` is not set are `"%s cannot be less than %s"` for `@Min` and `"%s cannot be greater than %s"` for `@Max`. The built-in keys are `validation.min`, `validation.max`, and `validation.custom`.
+</Note>

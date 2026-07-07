@@ -1,0 +1,144 @@
+---
+title: "CraftCommand Command Model: Classes, Methods, and Nesting"
+sidebarTitle: "Command Model"
+description: "Learn how CraftCommand models commands as annotated Java classes with @Default and @Subcommand methods, and how nested static classes enable deep subcommand hierarchies."
+---
+
+CraftCommand's command model maps directly to the structure of your Java classes — there is no YAML file, no XML configuration, and no method registry to maintain by hand. A single annotated class is the complete and authoritative description of a command, its subcommands, and all their parameters. The annotation processor reads this structure at compile time and generates a wrapper that mirrors it exactly.
+
+## Root command
+
+Place `@Command` on a class to declare it as a root command. The `value` attribute sets the primary name that users type. `aliases` provides alternative names that route to the same command, and `description` is an optional human-readable summary.
+
+```java
+@Command(value = "calc", aliases = {"c"}, description = "A simple CLI calculator")
+public class CalculatorCommand {
+    // handlers go here
+}
+```
+
+The annotation has `RetentionPolicy.CLASS`, so it is consumed entirely by the processor and leaves no trace in the compiled bytecode of your command class.
+
+## Default handler
+
+Annotate exactly one method with `@Default` to mark the handler that runs when the user types the root command name with no recognized subcommand keyword. The method must have a sender as its first parameter, followed by any argument parameters.
+
+```java
+@Command(value = "calc", aliases = {"c"}, description = "A simple CLI calculator")
+public class CalculatorCommand {
+
+    @Default
+    public void execute(Object sender, int num1, int num2) {
+        System.out.println("Result: " + (num1 + num2));
+    }
+}
+```
+
+If a command class has no `@Default` method and no matching subcommand is found, the generated wrapper calls `generateUnknownSubcommandMessage`, which by default prints the list of available subcommands.
+
+## Subcommands on methods
+
+Add `@Subcommand` to a method to create a subcommand. The `value` attribute is the keyword the user types after the root command name. `aliases` provides additional keywords for the same method. Every parameter after the sender maps to a positional command argument in declaration order.
+
+```java
+@Subcommand(value = "add")
+public void add(Object sender, int num1, int num2) {
+    System.out.println("Result: " + (num1 + num2));
+}
+
+@Subcommand(value = "sub", aliases = {"subtract"})
+public void subtract(Object sender, int num1, int num2) {
+    System.out.println("Result: " + (num1 - num2));
+}
+
+@Subcommand(value = "print")
+public void print(Object sender, @Optional("Result:") String prefix, @Greedy String text) {
+    System.out.println(prefix + " " + text);
+}
+```
+
+## Nested subcommand classes
+
+`@Subcommand` can also be placed on an inner class — static or non-static — to create a subcommand sub-tree. The nested class becomes its own command scope: it can contain its own `@Default` method, its own `@Subcommand` methods, and even further nested `@Subcommand` classes. This enables arbitrarily deep command hierarchies without any extra configuration.
+
+```java
+@Command(value = "test", aliases = {"t"}, description = "Test Command")
+public class TestCommand {
+
+    @Subcommand("nested")
+    public class NestedSub {
+
+        @Default
+        public void execute(Object sender, String arg) {
+            // handles: test nested <arg>
+        }
+
+        @Subcommand("sub")
+        public void runSub(Object sender, int val) {
+            // handles: test nested sub <val>
+        }
+
+        @Subcommand("deep")
+        public class DeepSub {
+
+            @Default
+            public void execute(Object sender) {
+                // handles: test nested deep
+            }
+
+            @Subcommand("value")
+            public void runDeepValue(Object sender, int val) {
+                // handles: test nested deep value <val>
+            }
+        }
+    }
+}
+```
+
+The processor handles both static and non-static inner classes. For non-static inner classes, the generated constructor creates the inner instance via `parentInstance.new InnerClass()`. For static nested classes, it uses `new NestedClass()` directly. Either style works; static nested classes are slightly preferred for clarity.
+
+## Parameter mapping rules
+
+The order and type of parameters in a handler method follow a fixed set of rules that the processor enforces at code-generation time:
+
+| # | Rule |
+|---|---|
+| 1 | **First parameter = sender.** The first parameter of every handler method is the command sender. Its type is resolved either by type matching (an `instanceof` check against the platform sender type) or by a `@Resolve`-annotated method in the command class. |
+| 2 | **Remaining parameters = positional arguments.** Parameters two onwards map to consecutive words in the command input, in declaration order. |
+| 3 | **`@Optional` parameters must follow required ones.** Optional parameters may have a default value string: `@Optional("1")` provides `"1"` as the fallback if the argument is absent. All required parameters must be declared before any optional ones. |
+| 4 | **`@Greedy` must be the last parameter.** A `@Greedy String` consumes all remaining input tokens as a single joined string. Only one greedy parameter is allowed per method and it must be declared last. |
+
+## Tab completion routing
+
+The processor generates suggestion routing that mirrors the subcommand tree exactly. When the user presses Tab, the generated `tabComplete` method inspects the current argument position and routes to the matching suggestion helper.
+
+For each parameter, the suggestion source is determined in this order:
+
+1. If the parameter has `@Suggest("methodName")`, the generator emits a call to that method or field. The referenced name can be either a method (accepting up to three parameters: `sender`, `String[]`, `String`) or a `public` field of type `List<String>`. For example, `@Suggest("getItems")` routes to a method, while `@Suggest("modes")` routes to a `public final List<String> modes` field.
+2. If the parameter type has a global resolver registered via `manager.registerResolver(...)`, the generated code calls `manager.getResolver(Type.class).suggest(sender, args, current)`.
+3. For `boolean`/`Boolean` parameters, the generator emits a call to a private `suggestBoolean(current)` helper that returns `["true", "false"]` filtered by the current input.
+4. For other built-in types (`int`, `double`, `String`, etc.), the generator returns an empty list.
+
+```java
+// Field-based suggestion source
+public final List<String> modes = Arrays.asList("easy", "hard");
+
+// Method-based suggestion source
+public List<String> getItems(Object sender, String[] args, String current) {
+    return Arrays.asList("sword", "shield", "potion");
+}
+
+@Default
+public void execute(Object sender, @Suggest("getItems") String item, @Optional("1") int amount) {
+    // item gets suggestions from getItems(); amount gets no suggestions (built-in int)
+}
+
+@Subcommand("mode")
+public void setMode(Object sender, @Suggest("modes") String mode) {
+    // mode gets suggestions from the modes field
+}
+```
+
+<Tip>
+  See [Annotations Reference](/reference/annotations-core) for the full specification of `@Command`, `@Subcommand`, `@Default`, `@Optional`, `@Greedy`, `@Suggest`, and `@Resolve`, including all available attributes and their default values.
+</Tip>

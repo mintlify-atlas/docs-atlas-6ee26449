@@ -1,7 +1,7 @@
 ---
 title: "Parameter Validation with @Min, @Max, and @ValidateWith"
 sidebarTitle: "Validation"
-description: "Add compile-time-generated parameter validation to CraftCommand commands using @Min, @Max for numeric bounds and @ValidateWith for custom validation methods."
+description: "Add compile-time parameter validation to CraftCommand using @Min and @Max for numeric bounds and @ValidateWith for custom validation methods."
 ---
 
 The validation module is an optional add-on for CraftCommand that generates bounds-checking and custom-validation code directly into the command wrapper at compile time. No runtime reflection is involved — the generated `if`-statements and `try/catch` blocks are plain Java, sitting right alongside the rest of the resolved parameter code.
@@ -73,6 +73,7 @@ public void giveItem(Object sender, String item, @Min(0) double amount) {
 The generated code is equivalent to:
 
 ```java
+// Validate parameter 'amount' against min limit: 0.0
 if (amount < 0.0) {
     throw new CommandException(manager.formatMessage(
         "validation.min", "%s cannot be less than %s", "amount", 0.0));
@@ -102,6 +103,7 @@ public void setSpeed(Object sender, @Max(10) double speed) {
 The generated code is equivalent to:
 
 ```java
+// Validate parameter 'speed' against max limit: 10.0
 if (speed > 10.0) {
     throw new CommandException(manager.formatMessage(
         "validation.max", "%s cannot be greater than %s", "speed", 10.0));

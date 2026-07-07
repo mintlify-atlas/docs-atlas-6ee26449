@@ -1,7 +1,7 @@
 ---
-title: "Error Handling in CraftCommand — ErrorHandler and CommandException"
+title: "Error Handling — ErrorHandler and CommandException"
 sidebarTitle: "Error Handling"
-description: "Learn how CraftCommand routes command errors through ErrorHandler<S> and CommandException, and how to customize error messages using formatMessage() and message keys."
+description: "How CraftCommand routes errors via ErrorHandler<S> and CommandException, with formatMessage() overrides and built-in message keys for usage and validation."
 ---
 
 When a command execution or argument resolution throws an exception, CraftCommand catches it inside
@@ -182,7 +182,7 @@ The following keys are used by the generated wrappers:
 | `"usage"` | `"Usage: %s"` | `%s` → full usage string |
 | `"validation.min"` | `"%s cannot be less than %s"` | `%1$s` → param name, `%2$s` → min value |
 | `"validation.max"` | `"%s cannot be greater than %s"` | `%1$s` → param name, `%2$s` → max value |
-| `"validation.with"` | `"%s validation failed: %s"` | `%1$s` → param name, `%2$s` → exception message |
+| `"validation.custom"` | `"%2$s"` | `%1$s` → param name, `%2$s` → exception message from the validator |
 
 <Tip>
   Custom message strings set in `@Min`, `@Max`, and `@ValidateWith` annotations are treated as

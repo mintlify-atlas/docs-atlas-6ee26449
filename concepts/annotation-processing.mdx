@@ -42,7 +42,7 @@ The `Naming` class also governs every other generated identifier: field names fo
 
 A generated wrapper is a `public final` class that implements the platform's command interface. Its anatomy is consistent across all platforms:
 
-**`factory()` static method** — a `public static` method that accepts the original command instance and a `CommandManager`. This is the single entry point used by `CommandFactory` at registration time.
+**Constructor** — the generated class has a `public` constructor that accepts the original command instance and a `CommandManager`. This is the entry point used by the platform manager's `register()` method at registration time.
 
 **`resolve_*` methods** — for each parameter type that requires a global resolver (one not covered by `TypeSupport`'s 17 built-ins or a local `@Resolve` method), the generator emits a private `resolve_<TypeName>` helper that delegates to `manager.resolveParameter(...)`. These are called by execution routing code and keep the routing methods clean and readable.
 
@@ -65,7 +65,7 @@ StandaloneCommand command = (StandaloneCommand) wrapperClass
         .newInstance(commandInstance, this);
 ```
 
-After that, the wrapper is stored in a `Map<String, StandaloneCommand>` (or platform equivalent) and every subsequent `execute()` or `tabComplete()` call dispatches directly through the generated class — zero additional reflection, zero proxy overhead.
+The wrapper is instantiated directly via its constructor — there is no intermediate `factory()` method or `CommandFactory` helper class involved. After construction, the wrapper is stored in a `Map<String, StandaloneCommand>` (or platform equivalent) and every subsequent `execute()` or `tabComplete()` call dispatches directly through the generated class — zero additional reflection, zero proxy overhead.
 
 <Note>
   Platform processors (`StandaloneCommandProcessor`, `BukkitCommandProcessor`, `PaperCommandProcessor`) are **internal API**. The exact shape of their generated output — method names, field layout, helper method signatures — may change between CraftCommand versions without a deprecation notice. Do not depend on the generated class structure directly; always interact with commands through the runtime `CommandManager` API.

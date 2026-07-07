@@ -130,11 +130,20 @@ public class CalculatorCommand {
     @Subcommand(value = "op")
     public void runOp(Object sender, @Suggest("operators") String op, int num1, int num2) {
         switch (op.toLowerCase()) {
-            case "add":      add(sender, num1, num2);      break;
-            case "subtract": subtract(sender, num1, num2); break;
-            case "multiply": multiply(sender, num1, num2); break;
-            case "divide":   divide(sender, num1, num2);   break;
-            default: throw new IllegalArgumentException("Unknown operator: " + op);
+            case "add":
+                add(sender, num1, num2);
+                break;
+            case "subtract":
+                subtract(sender, num1, num2);
+                break;
+            case "multiply":
+                multiply(sender, num1, num2);
+                break;
+            case "divide":
+                divide(sender, num1, num2);
+                break;
+            default:
+                throw new IllegalArgumentException("Unknown operator: " + op);
         }
     }
 
@@ -147,10 +156,18 @@ public class CalculatorCommand {
     @Subcommand("enumop")
     public void enumOp(Object sender, MathOp op, int num1, int num2) {
         switch (op) {
-            case ADD:      add(sender, num1, num2);      break;
-            case SUBTRACT: subtract(sender, num1, num2); break;
-            case MULTIPLY: multiply(sender, num1, num2); break;
-            case DIVIDE:   divide(sender, num1, num2);   break;
+            case ADD:
+                add(sender, num1, num2);
+                break;
+            case SUBTRACT:
+                subtract(sender, num1, num2);
+                break;
+            case MULTIPLY:
+                multiply(sender, num1, num2);
+                break;
+            case DIVIDE:
+                divide(sender, num1, num2);
+                break;
         }
     }
 
@@ -160,6 +177,7 @@ public class CalculatorCommand {
         System.out.println("You are: " + sender.getName());
     }
 
+    // Dynamic type demo: Enum parameter using registerProvider in CLIApp
     public enum MathOp {
         ADD, SUBTRACT, MULTIPLY, DIVIDE
     }
@@ -167,12 +185,16 @@ public class CalculatorCommand {
     public static class CustomSender {
         private final String name;
 
-        public CustomSender(String name) { this.name = name; }
+        public CustomSender(String name) {
+            this.name = name;
+        }
 
-        public String getName() { return name; }
+        public String getName() {
+            return name;
+        }
     }
 
-    // Nested subcommand class with validation annotations
+    // Use Case: Nested subcommand class (inner class) with validation annotations (@Min, @Max)
     @Subcommand("advanced")
     public class AdvancedCommands {
         @Default
@@ -185,7 +207,7 @@ public class CalculatorCommand {
             System.out.println("Result: " + Math.pow(base, exponent));
         }
 
-        // @Min validation on parameter
+        // Showcases @Min validation annotation on parameter
         @Subcommand("sqrt")
         public void sqrt(Object sender, @Min(0) double number) {
             System.out.println("Result: " + Math.sqrt(number));
@@ -238,15 +260,38 @@ public class CLIApp {
 
         manager.register(new CalculatorCommand());
 
-        // Execute a command
-        executeLine(manager, "calc add 40 2");   // → Result: 42
-        executeLine(manager, "calc sub 100 50"); // → Result: 50
-        executeLine(manager, "calc op multiply 6 7"); // → Result: 42
-        executeLine(manager, "calc advanced power 2 10"); // → Result: 1024.0
+        System.out.println("=== Standalone CraftCommand CLI Calculator ===");
+        System.out.println("Available commands: calc (or c)");
+        System.out.println("Try typing: calc add 5 10");
+        System.out.println("Try typing: calc op multiply 3 4");
+        System.out.println("Try typing: calc print custom_prefix Hello World!");
+        System.out.println("To see tab completions, type: suggest calc op ");
+        System.out.println("Type 'exit' or 'quit' to close.");
+        System.out.println("==============================================");
 
-        // Tab-complete suggestions
-        suggestLine(manager, "calc op "); // → Suggestions: [add, subtract, multiply, divide]
-        suggestLine(manager, "calc advanced "); // → Suggestions: [power, sqrt]
+        // Run direct demonstration
+        System.out.println("\n--- RUNNING DEMONSTRATION ---");
+        System.out.println("Executing: calc add 40 2");
+        executeLine(manager, "calc add 40 2");
+        System.out.println("Executing: calc sub 100 50");
+        executeLine(manager, "calc sub 100 50");
+        System.out.println("Executing: calc op multiply 6 7");
+        executeLine(manager, "calc op multiply 6 7");
+        System.out.println("Executing: calc print custom_prefix Hello World!");
+        executeLine(manager, "calc print custom_prefix Hello World!");
+        System.out.println("Executing: calc advanced");
+        executeLine(manager, "calc advanced");
+        System.out.println("Executing: calc advanced power 2 10");
+        executeLine(manager, "calc advanced power 2 10");
+        System.out.println("Executing: calc advanced sqrt 16");
+        executeLine(manager, "calc advanced sqrt 16");
+        System.out.println("Executing: calc enumop multiply 7 8");
+        executeLine(manager, "calc enumop multiply 7 8");
+        System.out.println("Suggesting: calc op ");
+        suggestLine(manager, "calc op ");
+        System.out.println("Suggesting: calc advanced ");
+        suggestLine(manager, "calc advanced ");
+        System.out.println("-----------------------------\n");
     }
 
     private static void executeLine(StandaloneCommandManager manager, String line) {

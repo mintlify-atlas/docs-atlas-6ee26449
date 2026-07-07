@@ -1,7 +1,7 @@
 ---
-title: "CraftCommand Bill of Materials (BOM) for Maven Version Management"
+title: "CraftCommand BOM — Maven Version Management"
 sidebarTitle: "BOM"
-description: "Use craftcommand-bom to manage versions of all CraftCommand modules from one import, avoiding version drift across annotations, runtime, and processor artifacts."
+description: "Use craftcommand-bom to centralize version management for all CraftCommand modules, avoiding drift between annotations, runtime, and processor artifacts."
 ---
 
 `craftcommand-bom` is a Maven Bill of Materials POM that centralizes version management for every CraftCommand module. Import it once in `<dependencyManagement>` and you can omit `<version>` tags from all CraftCommand dependency declarations in the same project. When you upgrade CraftCommand, you update a single version string in `<dependencyManagement>` and every module follows automatically — no risk of accidentally mixing a `0.5.0` runtime with a `0.5.1` annotations jar.

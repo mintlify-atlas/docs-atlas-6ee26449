@@ -1,7 +1,7 @@
 ---
 title: "CraftCommand Command Model: Classes, Methods, and Nesting"
 sidebarTitle: "Command Model"
-description: "Learn how CraftCommand models commands as annotated Java classes with @Default and @Subcommand methods, and how nested static classes enable deep subcommand hierarchies."
+description: "Learn how CraftCommand models commands as annotated Java classes with @Default and @Subcommand methods, and how nested inner classes enable deep subcommand hierarchies."
 ---
 
 CraftCommand's command model maps directly to the structure of your Java classes — there is no YAML file, no XML configuration, and no method registry to maintain by hand. A single annotated class is the complete and authoritative description of a command, its subcommands, and all their parameters. The annotation processor reads this structure at compile time and generates a wrapper that mirrors it exactly.
@@ -114,7 +114,7 @@ The processor generates suggestion routing that mirrors the subcommand tree exac
 
 For each parameter, the suggestion source is determined in this order:
 
-1. If the parameter has `@Suggest("methodName")`, the generator emits a call to that method or field. The referenced name can be either a method (accepting up to three parameters: `sender`, `String[]`, `String`) or a `public` field of type `List<String>`. For example, `@Suggest("getItems")` routes to a method, while `@Suggest("modes")` routes to a `public final List<String> modes` field.
+1. If the parameter has `@Suggest("methodName")`, the generator emits a call to that method or field. The referenced name can be either a method (accepting 0, 1, 2, or 3 parameters in the form `()`, `(sender)`, `(sender, current)`, or `(sender, String[] args, String current)`) or a field of type `List<String>`. For example, `@Suggest("getItems")` routes to a method, while `@Suggest("modes")` routes to a `public final List<String> modes` field.
 2. If the parameter type has a global resolver registered via `manager.registerResolver(...)`, the generated code calls `manager.getResolver(Type.class).suggest(sender, args, current)`.
 3. For `boolean`/`Boolean` parameters, the generator emits a call to a private `suggestBoolean(current)` helper that returns `["true", "false"]` filtered by the current input.
 4. For other built-in types (`int`, `double`, `String`, etc.), the generator returns an empty list.

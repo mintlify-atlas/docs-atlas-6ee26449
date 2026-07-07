@@ -76,8 +76,10 @@ public interface ArgumentResolver<S, T> {
 
     /**
      * Converts the raw string argument(s) into the target type T.
-     * args contains the full argument array available to the resolver;
+     * For width-1 resolvers, args is the complete arguments array and
      * current is the specific argument string being resolved.
+     * For width > 1, the manager passes a sub-array of exactly getWidth()
+     * tokens and current is the last token in that sub-array.
      */
     T resolve(S sender, String[] args, String current) throws Exception;
 

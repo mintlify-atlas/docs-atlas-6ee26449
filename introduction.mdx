@@ -47,8 +47,9 @@ The net result is command dispatch at near-native speed, deterministic behavior 
 
 | Module | Purpose |
 |---|---|
-| `craftcommand-annotations` | Core annotations: `@Command`, `@Subcommand`, `@Default`, `@Optional`, `@Suggest`, `@Greedy`, `@Resolve` |
-| `craftcommand-runtime` | Shared runtime interfaces and base classes used by all platform runtimes |
+| `craftcommand-annotations` | Core annotations: `@Command`, `@Subcommand`, `@Default`, `@Optional`, `@Suggest`, `@Greedy`, `@Resolve`, `@Name` |
+| `craftcommand-runtime` | Core runtime implementation and base classes used by all platform runtimes |
+| `craftcommand-processor` | Common base code shared by all platform annotation processors |
 | `craftcommand-standalone-runtime` | Runtime for standalone Java apps — `StandaloneCommandManager`, `StandaloneCommand` |
 | `craftcommand-standalone-processor` | Annotation processor that generates `*_Standalone` wrapper classes |
 | `craftcommand-bukkit-runtime` | Runtime for Bukkit/Spigot plugins |

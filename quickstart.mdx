@@ -143,6 +143,33 @@ This guide uses the **Standalone** platform — no Minecraft server required. Yo
             System.out.println(prefix + " " + text);
         }
 
+        // Enum parameter dispatched via a dynamically-registered provider (see CLIApp)
+        @Subcommand("enumop")
+        public void enumOp(Object sender, MathOp op, int num1, int num2) {
+            switch (op) {
+                case ADD:      add(sender, num1, num2);      break;
+                case SUBTRACT: subtract(sender, num1, num2); break;
+                case MULTIPLY: multiply(sender, num1, num2); break;
+                case DIVIDE:   divide(sender, num1, num2);   break;
+            }
+        }
+
+        // @Resolve("resolveSender") invokes the local resolver to convert the raw sender
+        @Subcommand("whoami")
+        public void whoAmI(@Resolve("resolveSender") CustomSender sender) {
+            System.out.println("You are: " + sender.getName());
+        }
+
+        public enum MathOp {
+            ADD, SUBTRACT, MULTIPLY, DIVIDE
+        }
+
+        public static class CustomSender {
+            private final String name;
+            public CustomSender(String name) { this.name = name; }
+            public String getName() { return name; }
+        }
+
         // Nested class becomes a nested subcommand group
         @Subcommand("advanced")
         public class AdvancedCommands {
@@ -156,23 +183,18 @@ This guide uses the **Standalone** platform — no Minecraft server required. Yo
                 System.out.println("Result: " + Math.pow(base, exponent));
             }
 
+            // @Min(0) validation: rejects negative inputs before the method body runs
             @Subcommand("sqrt")
             public void sqrt(Object sender, @Min(0) double number) {
                 System.out.println("Result: " + Math.sqrt(number));
             }
-        }
-
-        public static class CustomSender {
-            private final String name;
-            public CustomSender(String name) { this.name = name; }
-            public String getName() { return name; }
         }
     }
     ```
   </Step>
 
   <Step title="Register and run">
-    Create a `StandaloneCommandManager`, optionally register custom type providers, call `manager.register()` with your command instance, then retrieve the command by name and execute or tab-complete it.
+    Create a `StandaloneCommandManager`, optionally register custom type providers, call `manager.register()` with your command instance, then use the helper methods below to parse and dispatch command lines or collect tab-completion suggestions.
 
     ```java CLIApp.java
     package io.github.projectunified.craftcommand.example.standalone;
@@ -190,8 +212,7 @@ This guide uses the **Standalone** platform — no Minecraft server required. Yo
             // Register a dynamic provider so the framework can parse Java Enum arguments
             manager.registerProvider(type -> {
                 if (type.isEnum()) {
-                    return (sender, cmdArgs, current) ->
-                            Enum.valueOf((Class<Enum>) type, current.toUpperCase());
+                    return (sender, cmdArgs, current) -> Enum.valueOf((Class<Enum>) type, current.toUpperCase());
                 }
                 return null;
             });
@@ -199,21 +220,45 @@ This guide uses the **Standalone** platform — no Minecraft server required. Yo
             // Register the annotated command class
             manager.register(new CalculatorCommand());
 
-            // Retrieve by primary name (or alias)
-            StandaloneCommand cmd = manager.getCommand("calc");
-
             // Execute: "calc add 40 2"  →  prints "Result: 42"
-            cmd.execute("Console", new String[]{"add", "40", "2"});
+            executeLine(manager, "calc add 40 2");
 
             // Execute: "calc sub 100 50"  →  prints "Result: 50"
-            cmd.execute("Console", new String[]{"sub", "100", "50"});
+            executeLine(manager, "calc sub 100 50");
+
+            // Execute: "calc enumop MULTIPLY 6 7"  →  prints "Result: 42"
+            executeLine(manager, "calc enumop multiply 6 7");
 
             // Execute: "calc advanced sqrt 16"  →  prints "Result: 4.0"
-            cmd.execute("Console", new String[]{"advanced", "sqrt", "16"});
+            executeLine(manager, "calc advanced sqrt 16");
 
             // Tab-completion for "calc op "  →  suggests ["add", "subtract", "multiply", "divide"]
-            List<String> suggestions = cmd.tabComplete("Console", new String[]{"op", ""});
-            System.out.println("Suggestions: " + suggestions);
+            suggestLine(manager, "calc op ");
+        }
+
+        private static void executeLine(StandaloneCommandManager manager, String line) {
+            String[] parts = line.split(" ");
+            String label = parts[0];
+            StandaloneCommand cmd = manager.getCommand(label);
+            if (cmd == null) {
+                System.out.println("Unknown command: " + label);
+            } else {
+                String[] cmdArgs = Arrays.copyOfRange(parts, 1, parts.length);
+                cmd.execute("Console", cmdArgs);
+            }
+        }
+
+        private static void suggestLine(StandaloneCommandManager manager, String line) {
+            String[] parts = line.split(" ", -1);
+            String label = parts[0];
+            StandaloneCommand cmd = manager.getCommand(label);
+            if (cmd == null) {
+                System.out.println("Unknown command: " + label);
+            } else {
+                String[] cmdArgs = Arrays.copyOfRange(parts, 1, parts.length);
+                List<String> suggestions = cmd.tabComplete("Console", cmdArgs);
+                System.out.println("Suggestions: " + suggestions);
+            }
         }
     }
     ```
@@ -222,7 +267,7 @@ This guide uses the **Standalone** platform — no Minecraft server required. Yo
 
 ## What happens at compile time
 
-When Maven compiles `CalculatorCommand.java`, `craftcommand-standalone-processor` detects the `@Command("calc")` annotation and generates a new class called `CalculatorCommand_Standalone` in your build output. That class implements `StandaloneCommand` and contains switch-based dispatch logic that maps string subcommand tokens to direct calls to your `add()`, `subtract()`, `multiply()`, etc. methods. It also wires in any `@Min` / `@ValidateWith` validation checks before the method body runs.
+When Maven compiles `CalculatorCommand.java`, `craftcommand-standalone-processor` detects the `@Command("calc")` annotation and generates a new class called `CalculatorCommand_Standalone` in your build output. That class implements `StandaloneCommand` and contains switch-based dispatch logic that maps string subcommand tokens to direct calls to your `add()`, `subtract()`, `multiply()`, `enumOp()`, `whoAmI()`, etc. methods. It also wires in any `@Min` / `@ValidateWith` validation checks before the method body runs.
 
 At runtime, `StandaloneCommandManager.register()` performs exactly one `Class.forName("...CalculatorCommand_Standalone")` call to locate the generated class, constructs it, and registers it. From that point on, every `cmd.execute()` and `cmd.tabComplete()` call goes through ordinary generated Java — no reflection per invocation.
 

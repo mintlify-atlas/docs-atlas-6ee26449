@@ -1,7 +1,7 @@
 ---
 title: "Extending CraftCommand via Java SPI Extension Points"
 sidebarTitle: "SPI Extensions"
-description: "CraftCommand exposes Java SPI interfaces for adding custom parameter annotation handlers, method annotation handlers, and type support to the annotation processor pipeline."
+description: "Hook into CraftCommand's annotation processor pipeline via Java SPI: ParameterAnnotationHandler, MethodAnnotationHandler, and TypeSupport extension points."
 ---
 
 CraftCommand's annotation processor is extensible through standard Java SPI. Third-party libraries — such as the built-in validation module — can hook into the code generation pipeline without forking the framework. Extensions declare themselves in `META-INF/services` files and are discovered automatically when placed on the annotation processor classpath alongside a platform processor.
@@ -64,7 +64,7 @@ public class MinHandler implements ParameterAnnotationHandler<Min> {
                 ? "%s cannot be less than %s"
                 : annotation.message();
 
-        methodSpec.addComment("Validate '" + parameter.getName() + "' against min: " + annotation.value());
+        methodSpec.addComment("Validate parameter '" + parameter.getName() + "' against min limit: " + annotation.value());
         methodSpec.beginControlFlow("if ($L < $L)", varName, annotation.value())
                 .addStatement("throw new $T(manager.formatMessage($S, $S, $S, $L))",
                         CommandException.class, messageKey, defaultTemplate,
@@ -77,7 +77,7 @@ public class MinHandler implements ParameterAnnotationHandler<Min> {
 The resulting generated code looks like:
 
 ```java
-// Validate 'range' against min: 5.0
+// Validate parameter 'range' against min limit: 5.0
 if (range < 5.0) {
     throw new CommandException(manager.formatMessage(
         "validation.min", "%s cannot be less than %s", "range", 5.0));
@@ -139,20 +139,18 @@ The generated wrapper then contains this guard before any argument is resolved.
 
 `TypeSupport` is the single source of truth for how the processor maps Java types to generated resolver calls, default literals, Brigadier argument types, and suggestion code. Built-in JDK types (primitives, `String`) are pre-registered; platform processors add platform-specific types (e.g. `Player`, `World`).
 
-To contribute additional type mappings, build and register a `TypeSupport.Entry` via the fluent builder:
+The `Entry` builder is used internally by `TypeSupport` to register each type's behaviors. The fluent `Entry.Builder` API (accessible from within the same package) accepts:
 
-```java
-TypeSupport typeSupport = TypeSupport.builtins();
+| Builder method | Description |
+|---|---|
+| `primitiveDefault(String)` | The default literal for the type (`"0"`, `"false"`, `"null"`, etc.) |
+| `literal(Function<String, CodeBlock>)` | How to render a compile-time default value as a `CodeBlock` |
+| `parse(BiConsumer<MethodSpec.Builder, String[]>)` | Code-generation lambda that emits the parse statement (`va[0]` = variable, `va[1]` = arg token) |
+| `brigadierArgType(Function<Boolean, CodeBlock>)` | Returns the Brigadier `ArgumentType` expression for this type |
+| `brigadierRetrieval(Function<String, CodeBlock>)` | Returns the Brigadier `getXxx(ctx, argName)` retrieval expression |
+| `suggestReturn(BiFunction<String, String, CodeBlock>)` | Platform-specific suggestion code block |
 
-// Register a custom type — here an example platform type
-typeSupport.register(TypeSupport.Entry.builder(
-            ClassName.get("com.example", "MyType"), /* width */ 1)
-        .primitiveDefault("null")
-        .literal(defaultVal -> CodeBlock.of("null"))
-        .parse((spec, va) ->
-                spec.addStatement("$L = MyType.parse($L)", va[0], va[1]))
-        .build());
-```
+Platform processors (Bukkit, Paper, Standalone) extend the base `TypeSupport` by calling `typeSupport.register(entry)` from within the same module — `Entry.Builder` is package-private to `craftcommand-processor`.
 
 `TypeSupport` is used entirely at compile time; it has no runtime presence.
 
@@ -224,10 +222,12 @@ Extensions are discovered through the standard Java `ServiceLoader` mechanism. C
 
 ## SPI loading
 
-`SpiLoader` is the internal utility that discovers extension handlers during annotation processing. It uses `ServiceLoader` with an explicit class loader and silently skips any `ServiceConfigurationError`, ensuring that one misconfigured extension does not prevent the rest of the build from succeeding.
+`SpiLoader` is the internal utility that discovers extension handlers during annotation processing. It uses `ServiceLoader` with an explicit class loader to load all registered `ParameterAnnotationHandler` and `MethodAnnotationHandler` instances.
 
 ```java
 public final class SpiLoader {
+
+    private SpiLoader() {}
 
     /** Loads all registered ParameterAnnotationHandler instances. */
     public static List<ParameterAnnotationHandler<?>> loadParameterHandlers(ClassLoader classLoader) {

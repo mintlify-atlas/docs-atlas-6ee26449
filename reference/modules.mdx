@@ -19,7 +19,7 @@ These three artifacts are the foundation of every CraftCommand integration, rega
 | Artifact ID | Description | Scope |
 |---|---|---|
 | `craftcommand-annotations` | Core annotations (`@Command`, `@Subcommand`, `@Default`, `@Resolve`, etc.). No transitive dependencies. | `compile` |
-| `craftcommand-runtime` | `CommandManager` interface, `CommandFactory`, `ArgumentResolver`, `ErrorHandler`, and `CommandInfo` base classes. | `compile` |
+| `craftcommand-runtime` | `CommandManager`, `ArgumentResolver`, `ArgumentResolverProvider`, `ErrorHandler`, `CommandInfo`, and `CommandInfoExposer` base classes. | `compile` |
 | `craftcommand-processor` | `BaseCommandProcessor` plus the SPI interfaces (`TypeResolver`, `ParameterAnnotationHandler`, `MethodAnnotationHandler`). The shared base used internally by every platform processor. | **Processor path only** — never in `<dependencies>` |
 
 <Note>

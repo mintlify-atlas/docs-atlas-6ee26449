@@ -1,7 +1,7 @@
 ---
 title: "Building Custom Argument Resolvers for CraftCommand"
 sidebarTitle: "Custom Resolvers"
-description: "Extend CraftCommand's type system by implementing ArgumentResolver and ArgumentResolverProvider to parse custom Java types from command arguments and provide tab completions."
+description: "Implement ArgumentResolver and ArgumentResolverProvider to parse custom Java types from command arguments and provide tab completions in CraftCommand."
 ---
 
 Out of the box CraftCommand handles Java primitive types, their wrapper classes, `String`, and platform-specific types such as `Player` or `World`. Custom resolvers extend this to any Java class your commands need — value objects, enums, domain types, or multi-coordinate structures — without touching the generated wrapper code.

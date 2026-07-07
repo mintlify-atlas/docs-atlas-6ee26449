@@ -1,7 +1,7 @@
 ---
 title: "ArgumentResolver and ArgumentResolverProvider API Reference"
 sidebarTitle: "ArgumentResolver"
-description: "API reference for ArgumentResolver<S,T> and ArgumentResolverProvider<S> — the interfaces for converting raw command argument strings into typed Java values."
+description: "API reference for ArgumentResolver<S,T> and ArgumentResolverProvider<S> — CraftCommand's interfaces for parsing command arguments into typed Java values."
 ---
 
 `ArgumentResolver<S, T>` is a functional-style interface that teaches CraftCommand how to parse a custom type from command argument strings. Implement it for any type that CraftCommand does not handle out of the box, register the implementation with `CommandManager.registerResolver()` or `CommandManager.registerProvider()`, and the annotation processor will call it automatically wherever that type appears as a command parameter.
@@ -261,11 +261,17 @@ resolutions that are emitted as inline helper-method calls in the generated wrap
 | Type | Resolution |
 |------|-----------|
 | `org.bukkit.entity.Player` | `Bukkit.getPlayer(name)` — throws if not online |
-| `org.bukkit.OfflinePlayer` | `Bukkit.getOfflinePlayer(name)` — throws if never played |
+| `org.bukkit.OfflinePlayer` | `Bukkit.getOfflinePlayer(name)` — throws `IllegalArgumentException` if `hasPlayedBefore()` is false |
 | `org.bukkit.World` | `Bukkit.getWorld(name)` — throws if not found |
 | `org.bukkit.Location` | 4-argument parse: `world x y z` (width = 4) |
-| `org.bukkit.command.CommandSender` | Sender cast / fallback |
-| `io.papermc.paper.command.brigadier.CommandSourceStack` | Brigadier source (Paper only) |
+
+<Note>
+  `org.bukkit.command.CommandSender` and `io.papermc.paper.command.brigadier.CommandSourceStack`
+  are **not** listed here because they are not registered as built-in platform types. Instead they
+  are handled by the sender-type fallback (step 6 of the resolver lookup): when a parameter type
+  is assignment-compatible with the platform sender, the sender itself is cast and returned without
+  consuming any argument token.
+</Note>
 
 <Note>
   Tab-completion for `Player` and `World` is also generated automatically: the wrapper emits calls

@@ -1,10 +1,10 @@
 ---
 title: "CraftCommand for Bukkit and Spigot Minecraft Plugins"
 sidebarTitle: "Bukkit / Spigot"
-description: "Register CraftCommand commands in Bukkit/Spigot plugins using BukkitCommandManager. Includes Player, World, and Location resolvers, @Permission support, and syncCommand()."
+description: "Register CraftCommand commands in Bukkit/Spigot plugins using BukkitCommandManager. Includes Player, OfflinePlayer, World, and Location resolvers, @Permission support, and syncCommand()."
 ---
 
-The Bukkit platform integrates CraftCommand directly with Bukkit's `CommandMap`, enabling you to register commands programmatically without the verbose boilerplate of implementing `CommandExecutor` and `TabCompleter` by hand. The sender type on this platform is `org.bukkit.command.CommandSender`, which covers players, the console, and command blocks. Built-in resolvers handle common Bukkit types like `Player`, `World`, and `Location` automatically.
+The Bukkit platform integrates CraftCommand directly with Bukkit's `CommandMap`, enabling you to register commands programmatically without the verbose boilerplate of implementing `CommandExecutor` and `TabCompleter` by hand. The sender type on this platform is `org.bukkit.command.CommandSender`, which covers players, the console, and command blocks. The annotation processor generates parsing helpers for common Bukkit types — `Player`, `OfflinePlayer`, `World`, and `Location` — directly into the wrapper class, so no manual resolver registration is needed.
 
 <Warning>
   Commands registered through `CommandMap` must still have a corresponding entry in your `plugin.yml` file. The server reads `plugin.yml` during start-up to build its internal command table. Entries missing from `plugin.yml` may not be recognised by some server implementations or tab-completion clients.
@@ -101,7 +101,7 @@ import java.util.List;
 @Command(value = "tp", aliases = {"teleport"}, description = "Comprehensive Teleport Commands")
 @Permission("example.tp")
 public class TeleportCommand {
-    // Suggestion provider from a Field
+    // 1. Suggestion provider from a Field
     public final List<String> modes = Arrays.asList("normal", "silent", "instant");
     private final BukkitCommandManager commandManager;
 
@@ -109,13 +109,12 @@ public class TeleportCommand {
         this.commandManager = commandManager;
     }
 
-    // Context-aware suggestion method — filters players within 50 blocks
+    // 2. Suggestion provider from a Method (context-aware, filters players within 50 blocks)
     public List<String> getNearPlayers(Player sender, String[] args, String current) {
         List<String> suggestions = new ArrayList<>();
         String lower = current.toLowerCase();
         for (Player p : Bukkit.getOnlinePlayers()) {
-            if (p.getWorld().equals(sender.getWorld())
-                    && p.getLocation().distance(sender.getLocation()) < 50) {
+            if (p.getWorld().equals(sender.getWorld()) && p.getLocation().distance(sender.getLocation()) < 50) {
                 if (p.getName().toLowerCase().startsWith(lower)) {
                     suggestions.add(p.getName());
                 }
@@ -124,7 +123,7 @@ public class TeleportCommand {
         return suggestions;
     }
 
-    // Default subcommand with optional Player argument
+    // Use Case: @Default command with @Optional object argument
     @Default
     public void execute(Player sender, @Optional Player target) {
         if (target == null) {
@@ -136,7 +135,7 @@ public class TeleportCommand {
         }
     }
 
-    // Subcommand with platform-specific @Permission
+    // Use Case: @Subcommand with platform-specific @Permission
     @Subcommand(value = "here", aliases = {"h"})
     @Permission("example.tp.here")
     public void teleportHere(Player sender, Player target) {
@@ -144,7 +143,7 @@ public class TeleportCommand {
         sender.sendMessage("Teleported " + target.getName() + " to you");
     }
 
-    // Subcommand with no arguments
+    // Use Case: Subcommand with no arguments
     @Subcommand(value = "all")
     @Permission("example.tp.all")
     public void teleportAll(Player sender) {
@@ -156,90 +155,78 @@ public class TeleportCommand {
         sender.sendMessage("Teleported all online players to you");
     }
 
-    // Location resolved via the built-in global resolver (consumes 4 args: world x y z)
+    // Use Case: Resolving complex Location parameter via default global resolver (width = 4)
     @Subcommand("loc")
     public void teleportLocation(Player sender, Location location) {
         sender.teleport(location);
-        sender.sendMessage(String.format("Teleported to %.2f, %.2f, %.2f in %s",
-                location.getX(), location.getY(), location.getZ(),
-                location.getWorld().getName()));
+        sender.sendMessage(String.format("Teleported to %.2f, %.2f, %.2f in %s", location.getX(), location.getY(), location.getZ(), location.getWorld().getName()));
     }
 
-    // Local resolver for Location — accepts x, y, z plus an optional World
-    public Location resolveLocationLocal(Player sender, double x, double y, double z,
-                                         @Optional World world) {
+    // Local resolver method for Location with optional World parameter
+    public Location resolveLocationLocal(Player sender, double x, double y, double z, @Optional World world) {
         World targetWorld = world != null ? world : sender.getWorld();
         return new Location(targetWorld, x, y, z);
     }
 
-    // Uses the local resolver above (min_width = 3, max_width = 4)
+    // Use Case: Local parameter resolver with optional arguments (min_width = 3, max_width = 4)
     @Subcommand("loc-local")
-    public void teleportLocationLocal(Player sender,
-                                       @Resolve("resolveLocationLocal") Location location) {
+    public void teleportLocationLocal(Player sender, @Resolve("resolveLocationLocal") Location location) {
         sender.teleport(location);
-        sender.sendMessage(String.format("Teleported (local) to %.2f, %.2f, %.2f in %s",
-                location.getX(), location.getY(), location.getZ(),
-                location.getWorld().getName()));
+        sender.sendMessage(String.format("Teleported (local) to %.2f, %.2f, %.2f in %s", location.getX(), location.getY(), location.getZ(), location.getWorld().getName()));
     }
 
-    // Optional primitive with range validation
+    // Use Case: Subcommand with @Optional primitive defaults (boolean) and validations (@Min, @Max)
     @Subcommand(value = "player")
-    public void tpPlayer(Player sender, Player target,
-                         @Min(0) @Max(1) @Optional("0") int level) {
+    public void tpPlayer(Player sender, Player target, @Min(0) @Max(1) @Optional("0") int level) {
         sender.teleport(target);
-        sender.sendMessage("Teleported to " + target.getName()
-                + " with priority level " + level);
+        sender.sendMessage("Teleported to " + target.getName() + " with priority level " + level);
     }
 
-    // @Greedy captures the rest of the input into one string
+    // Use Case: Subcommand with @Greedy and @Name override
     @Subcommand(value = "msg")
-    public void sendMessage(Player sender, Player target,
-                            @Name("text") @Greedy String message) {
+    public void sendMessage(Player sender, Player target, @Name("text") @Greedy String message) {
         target.sendMessage(sender.getName() + " says: " + message);
         sender.sendMessage("Message sent to " + target.getName());
     }
 
-    // @Suggest from a field
+    // Use Case: @Suggest referencing a class Field
     @Subcommand(value = "mode")
     public void setMode(CommandSender sender, @Suggest("modes") String mode) {
         sender.sendMessage("Teleport mode set to: " + mode);
     }
 
-    // @Suggest from a method
+    // Use Case: @Suggest referencing a class Method
     @Subcommand(value = "near")
     public void tpNear(Player sender, @Suggest("getNearPlayers") Player target) {
         sender.teleport(target);
         sender.sendMessage("Teleported to nearby player: " + target.getName());
     }
 
-    // Sender is inferred from index-0 parameter type
+    // Use Case: No @Sender annotation; index 0 parameter acts as the sender resolved/cast automatically
     @Subcommand(value = "info")
     public void getInfo(Player player) {
         player.sendMessage("Your location is: " + player.getLocation());
     }
 
-    // Custom permission message
+    // Use Case: @Subcommand with a custom permission message
     @Subcommand("secret")
-    @Permission(value = "example.tp.secret",
-                message = "Access denied! The secret TP area is off-limits.")
+    @Permission(value = "example.tp.secret", message = "Access denied! The secret TP area is off-limits.")
     public void secretTp(Player sender) {
         sender.sendMessage("Welcome to the secret teleport area.");
     }
 
-    // Custom validation method
+    // Custom validation method for coordinate
     public void validateCoordinate(double coord) {
         if (Math.abs(coord) > 30000000) {
             throw new IllegalArgumentException("Coordinate cannot exceed 30,000,000!");
         }
     }
 
+    // Use Case: Custom validation annotation Showcase
     @Subcommand("tp-coord")
-    public void tpCoordinate(Player sender,
-                             @ValidateWith("validateCoordinate") double x,
-                             double y, double z) {
+    public void tpCoordinate(Player sender, @ValidateWith("validateCoordinate") double x, double y, double z) {
         sender.teleport(new Location(sender.getWorld(), x, y, z));
-        sender.sendMessage(String.format(
-                "Teleported to custom validated coordinates: %.2f, %.2f, %.2f", x, y, z));
+        sender.sendMessage(String.format("Teleported to custom validated coordinates: %.2f, %.2f, %.2f", x, y, z));
     }
 
     @Subcommand("help")
@@ -249,13 +236,11 @@ public class TeleportCommand {
             String path = String.join(" ", info.getPath());
             String usage = info.getUsage();
             String desc = info.getDescription();
-            sender.sendMessage("/" + path
-                    + (usage.isEmpty() ? "" : " " + usage)
-                    + (desc.isEmpty() ? "" : " - " + desc));
+            sender.sendMessage("/" + path + (usage.isEmpty() ? "" : " " + usage) + (desc.isEmpty() ? "" : " - " + desc));
         }
     }
 
-    // Nested subcommand inner class
+    // Use Case: Nested subcommand class (inner class)
     @Subcommand("admin")
     @Permission("example.tp.admin")
     public class AdminCommands {
@@ -320,10 +305,8 @@ public class ExamplePlugin extends JavaPlugin {
     public void onEnable() {
         this.commandManager = new BukkitCommandManager(this);
 
-        // Register your command class instance
+        // Register the command
         commandManager.register(new TeleportCommand(commandManager));
-
-        // Push command updates to Brigadier clients (1.13+)
         commandManager.syncCommand();
 
         getLogger().info("ExamplePlugin enabled and commands registered!");
@@ -340,14 +323,14 @@ public class ExamplePlugin extends JavaPlugin {
 
 ## Built-in Bukkit Type Resolvers
 
-The `craftcommand-bukkit-runtime` module pre-registers resolvers for common Bukkit types. You do not need to add anything extra to your command methods — just declare the parameter type and the runtime handles parsing.
+The `craftcommand-bukkit-processor` annotation processor generates parsing helper methods directly into the `_Executor` wrapper class for each command. You do not need to register anything manually — just declare the parameter type and the generated wrapper handles parsing.
 
 | Parameter type | Resolution logic |
 |----------------|-----------------|
-| `Player` | Looks up an online player by name using `Bukkit.getPlayer(name)`. Fails if no online player matches. |
-| `World` | Looks up a loaded world by name using `Bukkit.getWorld(name)`. |
-| `Location` | Parses four consecutive arguments as `world x y z`. The world is resolved the same way as the `World` resolver. |
-| `CommandSender` | Passes the sender through directly (identity resolver). |
+| `Player` | Looks up an online player by name using `Bukkit.getPlayer(name)`. Throws `IllegalArgumentException` if no online player matches. |
+| `OfflinePlayer` | Looks up an offline player by name using `Bukkit.getOfflinePlayer(name)`. Throws `IllegalArgumentException` if the player has not played before. |
+| `World` | Looks up a loaded world by name using `Bukkit.getWorld(name)`. Throws `IllegalArgumentException` if no loaded world matches. |
+| `Location` | Parses four consecutive arguments as `world x y z`. The world argument is resolved the same way as the `World` resolver. |
 
 ---
 

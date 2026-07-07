@@ -1,7 +1,7 @@
 ---
 title: "Bukkit-Specific Annotations Reference — CraftCommand"
 sidebarTitle: "Bukkit Annotations"
-description: "Reference for CraftCommand's Bukkit-platform annotations: @Permission for declaring required Bukkit permission nodes on command classes and subcommand methods."
+description: "Reference for CraftCommand's Bukkit annotations: @Permission — declare required permission nodes on command classes and subcommand methods."
 ---
 
 Bukkit-specific annotations are distributed in a separate artifact, `craftcommand-bukkit-annotations`, under the package `io.github.projectunified.craftcommand.bukkit.annotation`. This artifact is intentionally decoupled from the core annotations so that projects targeting other platforms (Standalone, Paper) are not forced to depend on Bukkit APIs. Like all CraftCommand annotations, these carry `RetentionPolicy.CLASS` and are consumed entirely at compile time.

@@ -1,7 +1,7 @@
 ---
 title: "CommandManager API Reference — CraftCommand"
 sidebarTitle: "CommandManager"
-description: "Full API reference for CommandManager<S>, StandaloneCommandManager, BukkitCommandManager, and PaperCommandManager — the central registries for resolvers and command instances."
+description: "API reference for CommandManager<S>, StandaloneCommandManager, BukkitCommandManager, and PaperCommandManager — registries for resolvers and commands."
 ---
 
 `CommandManager<S>` is the abstract base class that every CraftCommand integration is built on. It owns the resolver registry, the error handler, and the command-info exposer map. Platform-specific subclasses — `StandaloneCommandManager`, `BukkitCommandManager`, and `PaperCommandManager` — extend it to add platform registration logic (command-map registration for Bukkit, lifecycle-event deferral for Paper, label-map tracking for Standalone) while inheriting the full resolver and error-handling API.
